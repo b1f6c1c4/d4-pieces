@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <bit>
 
-enum class SymmetryGroup { C1, C2, D1, D2, D4 };
+enum class SymmetryGroup : uint16_t { C1, C2, C4, D1, D2, D4 };
 
 template <>
 struct fmt::formatter<SymmetryGroup> : formatter<string_view> {
@@ -35,6 +35,7 @@ private:
     }();
 
     shape_t value;
+    SymmetryGroup group;
 
     friend std::hash<Shape>;
 
@@ -46,8 +47,15 @@ private:
         return sh;
     }
 
+    explicit constexpr Shape(shape_t v, SymmetryGroup sg)
+        : value{ v }, group{ sg } { }
+
+    SymmetryGroup classify() const;
+
 public:
-    explicit constexpr Shape(shape_t v) : value{ shape_t(v & FULL) } { }
+    explicit constexpr Shape(shape_t v)
+        : value{ shape_t(v & FULL) }, group{ classify() } { }
+
     constexpr Shape(const Shape &v) = default;
     constexpr Shape(Shape &&v) noexcept = default;
     constexpr Shape &operator=(const Shape &v) noexcept = default;
@@ -58,26 +66,29 @@ public:
         return std::popcount(value);
     }
 
-    bool test(size_t row, size_t col) const {
+    [[nodiscard]] constexpr auto symmetry() const {
+        return group;
+    }
+
+    [[nodiscard]] bool test(size_t row, size_t col) const {
         return (value >> (row * LEN + col)) & 1u;
     }
 
-    // false, false, false => identity
-    // false, true,  false => flipX
-    // false, false, true  => flipY
-    // false, true,  true  => rot180
-    // true,  false, false => flip primary
-    // true,  true,  false => rot90 CW
-    // true,  false, true  => rot90 CCW
-    // true,  true,  true  => flip secondary
+    // C1 C2 C4 D1 D2 D4
+    // =  =  =  =  =  =  false, false, false => identity
+    //          ?  ?  =  false, true,  false => flip X
+    //          ?  ?  =  false, false, true  => flip Y
+    //    =  =     =  =  false, true,  true  => rot180
+    //          ?  ?  =  true,  false, false => flip primary
+    //       =        =  true,  true,  false => rot90 CW
+    //       =        =  true,  false, true  => rot90 CCW
+    //          ?  ?  =  true,  true,  true  => flip secondary
     template <bool Swap, bool FlipX, bool FlipY>
-    Shape transform() const;
+    [[nodiscard]] Shape transform() const;
 
-    Shape canonical_form() const;
+    [[nodiscard]] Shape canonical_form() const;
 
-    bool connected() const;
-
-    SymmetryGroup classify() const;
+    [[nodiscard]] bool connected() const;
 };
 
 template <>

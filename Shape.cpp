@@ -4,7 +4,7 @@
 
 template <bool Swap, bool FlipX, bool FlipY>
 Shape Shape::transform() const {
-    if (!value) return Shape{ 0u };
+    if (!value) return Shape{ 0u, SymmetryGroup::D4 };
     shape_t out{};
     // iterate from out's MSB to LSB
     for (auto i = 0zu; i < LEN * LEN; i++) {
@@ -17,7 +17,7 @@ Shape Shape::transform() const {
         if constexpr (FlipY) in_row = LEN - in_row - 1;
         out |= test(in_row, in_col);
     }
-    return Shape{ normalize(out) };
+    return Shape{ normalize(out), group };
 }
 
 template Shape Shape::transform<false, false, false>() const;
@@ -39,7 +39,7 @@ Shape Shape::canonical_form() const {
         transform<true,  true,  false>().value,
         transform<true,  false, true >().value,
         transform<true,  true,  true >().value,
-    }) };
+    }), group };
 }
 
 bool Shape::connected() const {
@@ -63,7 +63,7 @@ bool Shape::connected() const {
 SymmetryGroup Shape::classify() const {
     auto x = *this == transform<false, true, false>();
     auto y = *this == transform<false, false, true>();
-    auto p = *this == transform<true, true, false>();
+    auto p = *this == transform<true, false, false>();
     auto s = *this == transform<true, true, true>();
     if (x && y && p && s)
         return SymmetryGroup::D4;
@@ -71,6 +71,8 @@ SymmetryGroup Shape::classify() const {
         return SymmetryGroup::D2;
     if (x || y || p || s)
         return SymmetryGroup::D1;
+    if (*this == transform<true, true, false>())
+        return SymmetryGroup::C4;
     if (*this == transform<false, true, true>())
         return SymmetryGroup::C2;
     return SymmetryGroup::C1;
@@ -82,6 +84,7 @@ auto fmt::formatter<SymmetryGroup>::format(SymmetryGroup c, format_context &ctx)
     switch (c) {
         case SymmetryGroup::C1: name = "C1"; break;
         case SymmetryGroup::C2: name = "C2"; break;
+        case SymmetryGroup::C4: name = "C4"; break;
         case SymmetryGroup::D1: name = "D1"; break;
         case SymmetryGroup::D2: name = "D2"; break;
         case SymmetryGroup::D4: name = "D4"; break;
