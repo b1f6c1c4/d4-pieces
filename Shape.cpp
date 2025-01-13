@@ -5,7 +5,7 @@
 
 template <bool Swap, bool FlipX, bool FlipY>
 Shape Shape::transform(bool norm) const {
-    if (!value) return Shape{ 0u, SymmetryGroup::D4 };
+    if (!value) return Shape{ 0u };
     shape_t out{};
     // iterate from out's MSB to LSB
     for (auto i = 0zu; i < LEN * LEN; i++) {
@@ -18,7 +18,7 @@ Shape Shape::transform(bool norm) const {
         if constexpr (FlipY) in_row = LEN - in_row - 1;
         out |= test(in_row, in_col);
     }
-    auto sh = Shape{ out, group };
+    auto sh = Shape{ out };
     if (norm)
         return sh.normalize();
     return sh;

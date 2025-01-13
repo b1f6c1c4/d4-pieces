@@ -3,10 +3,12 @@
 #include <boost/integer.hpp>
 #include <fmt/base.h>
 #include <functional>
-#include <algorithm>
 #include <bit>
 #include <compare>
 #include <array>
+#include <vector>
+
+using coords_t = std::pair<int, int>; // Y, X
 
 enum class SymmetryGroup : uint16_t { C1, C2, C4, D1, D2, D4 };
 
@@ -19,12 +21,13 @@ struct fmt::formatter<SymmetryGroup> : formatter<string_view> {
 class Shape {
 public:
     static constexpr size_t LEN = 8;
-private:
     // [LSB] [1] [2] [3]
     // [4] ...
     // [8] ...
     // [12] ...    [MSB]
     using shape_t = boost::uint_t<LEN * LEN>::least;
+
+private:
     static constexpr size_t BITS = sizeof(shape_t) * 8;
 
     static constexpr size_t FULL = static_cast<shape_t>(
@@ -39,18 +42,14 @@ private:
     }();
 
     shape_t value;
-    SymmetryGroup group;
 
     friend std::hash<Shape>;
 
-    explicit constexpr Shape(shape_t v, SymmetryGroup sg)
-        : value{ v }, group{ sg } { }
-
-    SymmetryGroup classify() const;
-
 public:
     explicit constexpr Shape(shape_t v)
-        : value{ shape_t(v & FULL) }, group{ classify() } { }
+        : value{ shape_t(v & FULL) } { }
+
+    SymmetryGroup classify() const;
 
     constexpr Shape(const Shape &v) = default;
     constexpr Shape(Shape &&v) noexcept = default;
@@ -64,9 +63,9 @@ public:
     [[nodiscard]] constexpr auto operator<=>(const Shape &other) const {
         if (value == other.value)
             return std::partial_ordering::equivalent;
-        if (value & other.value == value)
+        if ((value & other.value) == value)
             return std::partial_ordering::less;
-        if (value & other.value == other.value)
+        if ((value & other.value) == other.value)
             return std::partial_ordering::greater;
         return std::partial_ordering::unordered;
     }
@@ -78,7 +77,7 @@ public:
     [[nodiscard]] constexpr size_t left() const {
         auto w = 0;
         auto v = value;
-        for (; !(v & FIRST_COL); v <<= 1u)
+        for (; !(v & FIRST_COL); v >>= 1u)
             w++;
         return w;
     }
@@ -87,8 +86,8 @@ public:
     [[nodiscard]] constexpr size_t width() const {
         auto w = 0;
         auto v = value;
-        for (; !(v & FIRST_COL); v <<= 1u);
-        for (; v & FIRST_COL; v <<= 1u)
+        for (; !(v & FIRST_COL); v >>= 1u);
+        for (; v & FIRST_COL; v >>= 1u)
             w++;
         return w;
     }
@@ -100,7 +99,7 @@ public:
     [[nodiscard]] constexpr size_t top() const {
         auto h = 0;
         auto v = value;
-        for (; !(v & FIRST_ROW); v <<= LEN)
+        for (; !(v & FIRST_ROW); v >>= LEN)
             h++;
         return h;
     }
@@ -109,8 +108,8 @@ public:
     [[nodiscard]] constexpr size_t height() const {
         auto h = 0;
         auto v = value;
-        for (; !(v & FIRST_ROW); v <<= LEN);
-        for (; v & FIRST_ROW; v <<= LEN)
+        for (; !(v & FIRST_ROW); v >>= LEN);
+        for (; v & FIRST_ROW; v >>= LEN)
             h++;
         return h;
     }
@@ -129,21 +128,25 @@ public:
 
     [[nodiscard]] constexpr Shape normalize() const {
         if (!value)
-            return Shape{ value, SymmetryGroup::D4 };
+            return Shape{ value };
         auto v = value;
         while (!(v & FIRST_ROW))
             v >>= LEN;
         while (!(v & FIRST_COL))
             v >>= 1u;
-        return Shape{ v, group };
-    }
-
-    [[nodiscard]] constexpr auto symmetry() const {
-        return group;
+        return Shape{ v };
     }
 
     [[nodiscard]] bool test(size_t row, size_t col) const {
         return (value >> (row * LEN + col)) & 1u;
+    }
+
+    [[nodiscard]] Shape set(size_t row, size_t col) const {
+        return Shape{ value | 1ull << (row * LEN + col) };
+    }
+
+    [[nodiscard]] Shape clear(size_t row, size_t col) const {
+        return Shape{ value & ~(1ull << (row * LEN + col)) };
     }
 
     // C1 C2 C4 D1 D2 D4
@@ -164,8 +167,8 @@ public:
     // -x  +x
     //   +y
     [[nodiscard]] Shape translate(int x, int y) const;
-    [[nodiscard]] Shape translate(std::pair<int, int> d) const {
-        return translate(d.first, d.second);
+    [[nodiscard]] Shape translate(coords_t d) const {
+        return translate(d.second, d.first);
     }
 
     constexpr auto front() const {
@@ -173,7 +176,7 @@ public:
         return std::make_pair(id / LEN, id % LEN);
     }
     constexpr auto bits() const {
-        std::vector<std::pair<int, int>> pos;
+        std::vector<coords_t> pos;
         for (auto v = value; v; v -= v & -v) {
             auto id = std::countr_zero(v);
             pos.emplace_back(id / LEN, id % LEN);
