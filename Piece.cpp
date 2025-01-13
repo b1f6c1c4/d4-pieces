@@ -9,10 +9,8 @@
 
 Piece::Piece(Shape s) : count{ 1 }, canonical{ s } {
     for (auto sh : canonical.transforms(true)) {
-        if (std::ranges::find(placements, sh, &Placement::normal) != placements.end())
-            continue;
-
-        placements.emplace_back(sh, std::make_pair(sh.bottom(), sh.right()));
+        auto duplicate = std::ranges::find(placements, sh, &Placement::normal) != placements.end();
+        placements.emplace_back(sh, std::make_pair(sh.bottom(), sh.right()), !duplicate, duplicate);
     }
 }
 
@@ -27,21 +25,6 @@ void Piece::cover(coords_t pos, auto &&func) const {
                 continue;
             func(p.normal.translate(tgtX - bitX, tgtY - bitY));
         }
-    }
-}
-
-Library::Library(std::initializer_list<Shape::shape_t> lst) {
-    for (auto sh : lst)
-        push(Shape{ sh });
-}
-
-// O(n^2) push, won't fix
-void Library::push(Shape sh) {
-    sh = sh.canonical_form();
-    if (auto it = std::ranges::find(lib, sh, &Piece::canonical); it != lib.end()) {
-        it->count++;
-    } else {
-        lib.emplace_back(sh);
     }
 }
 
@@ -60,18 +43,18 @@ Solution::Solution(std::vector<Step> history) : steps{ std::move(history) } {
     }
 }
 
-std::vector<Solution> Library::solve(Shape board) const {
+std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board) {
     std::vector<Solution> solutions;
     std::vector<size_t> used(lib.size(), 0);
     std::vector<Step> history;
-    [&,that=this](this auto &&self, Shape open_tiles) {
+    [&](this auto &&self, Shape open_tiles) {
         if (!open_tiles) {
             solutions.emplace_back(history);
             return;
         }
         auto pos = open_tiles.front();
         history.emplace_back(0u, Shape{ 0u });
-        for (auto &&[p, u, id] : std::views::zip(that->lib, used, std::views::iota(0zu))) {
+        for (auto &&[p, u, id] : std::views::zip(lib, used, std::views::iota(0zu))) {
             if (u == p.count) continue;
             u++;
             p.cover(pos, [&](Shape placed) {

@@ -1,14 +1,35 @@
-import React from 'react';
+import React, {useReducer, useState} from 'react';
 import Piece from './Piece';
 
-const PieceSelector = ({ shapeId, shape, avail, onAvailChange }) => {
+const PieceSelector = ({ module, shapeId, piece, onChange }) => {
+  const [override, setOverride] = useState(undefined);
+  const [sym, setSym] = useState('D4');
+
   const handleDecrease = () => {
-    if (avail > 0) onAvailChange(avail - 1);
+    if (piece.count > 0) {
+      piece.count--;
+      onChange();
+    }
   };
 
   const handleIncrease = () => {
-    onAvailChange(avail + 1);
+    piece.count++;
+    onChange();
   };
+
+  const handleSym = (e) => {
+    if (e.target.value === 'Custom') return;
+    const grp = module.SymmetryGroup[e.target.value];
+    const prod = module.groupProduct(piece.shape.classify, grp)
+    for (let i = 0; i < 8; i++) {
+      const placement = piece.placements.get(i);
+      if (placement.duplicate) continue;
+      placement.enabled = (grp.value & (1 << i));
+      piece.placements.set(i, placement);
+    }
+    setSym(e.target.value);
+  };
+
 
   const containerStyle = {
     display: 'flex',
@@ -26,16 +47,49 @@ const PieceSelector = ({ shapeId, shape, avail, onAvailChange }) => {
 
   return (
     <div style={containerStyle}>
-      <Piece shape={shape} reduced shapeId={shapeId} />
+      <Piece shape={override ?? piece.shape} reduced shapeId={shapeId} />
       <div style={inputContainerStyle}>
         <button onClick={handleDecrease}>-</button>
         <input
           type="number"
-          value={avail}
-          onChange={(e) => onAvailChange(Number(e.target.value))}
+          value={piece.count}
+          onChange={(e) => { piece.count = Number(e.target.value); onChange(); }}
           style={{ width: '50px', textAlign: 'center' }}
         />
         <button onClick={handleIncrease}>+</button>
+      </div>
+      <div className="sym">
+        <span>Sym: {piece.shape.classify.constructor.name.replace(/^SymmetryGroup_/, '')}</span>
+        {['Id', 'X', 'Y', '180', 'P', '90CW', '90CCW', 'S'].map((s, id) => {
+          const placement = piece.placements.get(id);
+          return (
+            <input type="checkbox"
+              key={id}
+              title={s}
+              disabled={placement.duplicate}
+              checked={placement.enabled}
+              onMouseEnter={() => setOverride(placement.normal)}
+              onMouseLeave={() => setOverride()}
+              onChange={(e) => {
+                placement.enabled = e.target.checked;
+                piece.placements.set(id, placement);
+                setSym('Custom');
+                onChange();
+              }}/>
+          );
+        })}
+        <span>Placement:</span>
+        <select onChange={handleSym} value={sym}>
+          <option value="Custom">(Custom)</option>
+          {['C1', 'C2', 'C4', 'D1_X', 'D1_Y', 'D1_P', 'D1_S', 'D2_XY', 'D2_PS', 'D4'].map(s => {
+            const grp = module.SymmetryGroup[s];
+            const prod = module.groupProduct(piece.shape.classify, grp)
+            if (grp == prod)
+              return (
+                <option key={s} value={s}>{s}</option>
+              );
+          })}
+        </select>
       </div>
     </div>
   );

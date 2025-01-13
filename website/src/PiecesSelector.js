@@ -8,16 +8,16 @@ const containerStyle = {
   padding: '10px',
 };
 
-const PiecesSelector = ({ shapes, onAvailChange }) => {
+const PiecesSelector = ({ module, pieces, onChange }) => {
   return (
     <div style={containerStyle}>
-      {shapes.map((item, index) => (
+      {pieces.map((item, index) => (
         <PieceSelector
           key={index}
+          module={module}
           shapeId={index}
-          shape={item.shape}
-          avail={item.count}
-          onAvailChange={(value) => onAvailChange(index, value)}
+          piece={item}
+          onChange={onChange}
         />
       ))}
     </div>

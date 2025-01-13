@@ -72,7 +72,21 @@
   border-width: 0;
   border-color: #ccc;
   border-style: solid;
+}
+
+.overlay .tile {
   transition:
     opacity 0.3s,
     background-color 0.3s;
+}
+
+.sym {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+
+.sym span, .sym select {
+  grid-column: 1 / 5;
+  grid-column: 1 / 5;
 }

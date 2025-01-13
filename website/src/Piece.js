@@ -39,10 +39,11 @@ const colors = Array(1000).fill(0).map(nextHls);
 const Piece = ({ shapeId, stepId, shape, reduced }) => {
   const bits = shape.value.toString(2).padStart(shape.LEN ** 2, '0').split('').reverse();
 
+  const N = Math.max(shape.width, shape.height);
   const gridStyle = reduced ? {
     display: 'grid',
-    gridTemplateColumns: `repeat(${shape.width}, 20px)`,
-    gridTemplateRows: `repeat(${shape.height}, 20px)`,
+    gridTemplateColumns: `repeat(${N}, 20px)`,
+    gridTemplateRows: `repeat(${N}, 20px)`,
     gap: '0',
   } : {
     display: 'grid',
