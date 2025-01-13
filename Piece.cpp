@@ -17,6 +17,8 @@ Piece::Piece(Shape s) : count{ 1 }, canonical{ s } {
 void Piece::cover(coords_t pos, auto &&func) const {
     auto [tgtY, tgtX] = pos;
     for (auto &p : placements) {
+        if (!p.enabled)
+            continue;
         auto [maxY, maxX] = p.max;
         for (auto [bitY, bitX] : p.normal.bits()) {
             if (bitX > tgtX || bitX + maxX < tgtX)
