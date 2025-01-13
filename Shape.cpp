@@ -1,9 +1,10 @@
 #include "Shape.hpp"
 #include <string>
 #include <fmt/format.h>
+#include <ranges>
 
 template <bool Swap, bool FlipX, bool FlipY>
-Shape Shape::transform() const {
+Shape Shape::transform(bool norm) const {
     if (!value) return Shape{ 0u, SymmetryGroup::D4 };
     shape_t out{};
     // iterate from out's MSB to LSB
@@ -17,29 +18,45 @@ Shape Shape::transform() const {
         if constexpr (FlipY) in_row = LEN - in_row - 1;
         out |= test(in_row, in_col);
     }
-    return Shape{ normalize(out), group };
+    auto sh = Shape{ out, group };
+    if (norm)
+        return sh.normalize();
+    return sh;
 }
 
-template Shape Shape::transform<false, false, false>() const;
-template Shape Shape::transform<false, true,  false>() const;
-template Shape Shape::transform<false, false, true >() const;
-template Shape Shape::transform<false, true,  true >() const;
-template Shape Shape::transform<true,  false, false>() const;
-template Shape Shape::transform<true,  true,  false>() const;
-template Shape Shape::transform<true,  false, true >() const;
-template Shape Shape::transform<true,  true,  true >() const;
+template Shape Shape::transform<false, false, false>(bool norm) const;
+template Shape Shape::transform<false, true,  false>(bool norm) const;
+template Shape Shape::transform<false, false, true >(bool norm) const;
+template Shape Shape::transform<false, true,  true >(bool norm) const;
+template Shape Shape::transform<true,  false, false>(bool norm) const;
+template Shape Shape::transform<true,  true,  false>(bool norm) const;
+template Shape Shape::transform<true,  false, true >(bool norm) const;
+template Shape Shape::transform<true,  true,  true >(bool norm) const;
+
+std::array<Shape, 8> Shape::transforms(bool norm) const {
+    return {
+        transform<false, false, false>(norm),
+        transform<false, true,  false>(norm),
+        transform<false, false, true >(norm),
+        transform<false, true,  true >(norm),
+        transform<true,  false, false>(norm),
+        transform<true,  true,  false>(norm),
+        transform<true,  false, true >(norm),
+        transform<true,  true,  true >(norm),
+    };
+}
+
+Shape Shape::translate(int x, int y) const {
+    auto v = value;
+    while (y > 0) v <<= LEN, y--;
+    while (y < 0) v >>= LEN, y++;
+    while (x > 0) v <<= 1u, v &= ~FIRST_COL, x--;
+    while (x < 0) v &= ~FIRST_COL, v >>= 1u, x++;
+    return Shape{ v };
+}
 
 Shape Shape::canonical_form() const {
-    return Shape{ std::min({
-        transform<false, false, false>().value,
-        transform<false, true,  false>().value,
-        transform<false, false, true >().value,
-        transform<false, true,  true >().value,
-        transform<true,  false, false>().value,
-        transform<true,  true,  false>().value,
-        transform<true,  false, true >().value,
-        transform<true,  true,  true >().value,
-    }), group };
+    return std::ranges::min(transforms(true), std::less{}, &Shape::value);
 }
 
 bool Shape::connected() const {
@@ -47,8 +64,8 @@ bool Shape::connected() const {
     auto visited = static_cast<shape_t>(value & -value);
     if (visited == value) return true;
     while (true) {
-        auto north = visited >> 4u;
-        auto south = visited << 4u;
+        auto north = visited >> LEN;
+        auto south = visited << LEN;
         auto west = (visited & ~FIRST_COL) >> 1u;
         auto east = (visited << 1u) & ~FIRST_COL;
         auto next = (visited | north | south | west | east) & value;
@@ -61,19 +78,20 @@ bool Shape::connected() const {
 }
 
 SymmetryGroup Shape::classify() const {
-    auto x = *this == transform<false, true, false>();
-    auto y = *this == transform<false, false, true>();
-    auto p = *this == transform<true, false, false>();
-    auto s = *this == transform<true, true, true>();
+    auto base = normalize();
+    auto x = base == transform<false, true, false>(true);
+    auto y = base == transform<false, false, true>(true);
+    auto p = base == transform<true, false, false>(true);
+    auto s = base == transform<true, true, true>(true);
     if (x && y && p && s)
         return SymmetryGroup::D4;
     if (x && y || p && s)
         return SymmetryGroup::D2;
     if (x || y || p || s)
         return SymmetryGroup::D1;
-    if (*this == transform<true, true, false>())
+    if (*this == transform<true, true, false>(true))
         return SymmetryGroup::C4;
-    if (*this == transform<false, true, true>())
+    if (*this == transform<false, true, true>(true))
         return SymmetryGroup::C2;
     return SymmetryGroup::C1;
 }

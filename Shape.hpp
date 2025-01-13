@@ -5,6 +5,8 @@
 #include <functional>
 #include <algorithm>
 #include <bit>
+#include <compare>
+#include <array>
 
 enum class SymmetryGroup : uint16_t { C1, C2, C4, D1, D2, D4 };
 
@@ -16,16 +18,18 @@ struct fmt::formatter<SymmetryGroup> : formatter<string_view> {
 
 class Shape {
 public:
-    static constexpr size_t LEN = 4;
+    static constexpr size_t LEN = 8;
 private:
     // [LSB] [1] [2] [3]
     // [4] ...
     // [8] ...
     // [12] ...    [MSB]
     using shape_t = boost::uint_t<LEN * LEN>::least;
+    static constexpr size_t BITS = sizeof(shape_t) * 8;
 
-    static constexpr size_t FULL = static_cast<shape_t>((1ull << (LEN * LEN)) - 1u);
-    static constexpr size_t FIRST_ROW = static_cast<shape_t>((1ull << LEN) - 1u);
+    static constexpr size_t FULL = static_cast<shape_t>(
+            LEN * LEN == BITS ? ~0ull : (1ull << (LEN * LEN % BITS)) - 1ull);
+    static constexpr size_t FIRST_ROW = static_cast<shape_t>((1ull << LEN) - 1ull);
     static constexpr size_t FIRST_COL = [] constexpr {
         shape_t total{};
         shape_t mask{ 1 };
@@ -38,14 +42,6 @@ private:
     SymmetryGroup group;
 
     friend std::hash<Shape>;
-
-    static constexpr shape_t normalize(shape_t sh) {
-        while (!(sh & FIRST_ROW))
-            sh >>= 4u;
-        while (!(sh & FIRST_COL))
-            sh >>= 1u;
-        return sh;
-    }
 
     explicit constexpr Shape(shape_t v, SymmetryGroup sg)
         : value{ v }, group{ sg } { }
@@ -60,10 +56,86 @@ public:
     constexpr Shape(Shape &&v) noexcept = default;
     constexpr Shape &operator=(const Shape &v) noexcept = default;
     constexpr Shape &operator=(Shape &&v) noexcept = default;
-    constexpr bool operator==(const Shape &other) const = default;
 
-    constexpr size_t size() const {
+    constexpr operator bool() const { return value; }
+    [[nodiscard]] constexpr auto operator==(const Shape &other) const {
+        return value == other.value;
+    }
+    [[nodiscard]] constexpr auto operator<=>(const Shape &other) const {
+        if (value == other.value)
+            return std::partial_ordering::equivalent;
+        if (value & other.value == value)
+            return std::partial_ordering::less;
+        if (value & other.value == other.value)
+            return std::partial_ordering::greater;
+        return std::partial_ordering::unordered;
+    }
+
+    [[nodiscard]] constexpr size_t size() const {
         return std::popcount(value);
+    }
+
+    [[nodiscard]] constexpr size_t left() const {
+        auto w = 0;
+        auto v = value;
+        for (; !(v & FIRST_COL); v <<= 1u)
+            w++;
+        return w;
+    }
+
+    // excluding left margin
+    [[nodiscard]] constexpr size_t width() const {
+        auto w = 0;
+        auto v = value;
+        for (; !(v & FIRST_COL); v <<= 1u);
+        for (; v & FIRST_COL; v <<= 1u)
+            w++;
+        return w;
+    }
+
+    [[nodiscard]] constexpr size_t right() const {
+        return LEN - left() - width();
+    }
+
+    [[nodiscard]] constexpr size_t top() const {
+        auto h = 0;
+        auto v = value;
+        for (; !(v & FIRST_ROW); v <<= LEN)
+            h++;
+        return h;
+    }
+
+    // excluding top margin
+    [[nodiscard]] constexpr size_t height() const {
+        auto h = 0;
+        auto v = value;
+        for (; !(v & FIRST_ROW); v <<= LEN);
+        for (; v & FIRST_ROW; v <<= LEN)
+            h++;
+        return h;
+    }
+
+    [[nodiscard]] constexpr size_t bottom() const {
+        return LEN - top() - height();
+    }
+
+    [[nodiscard]] constexpr Shape operator+(Shape other) const {
+        return Shape{ value | ~other.value };
+    }
+
+    [[nodiscard]] constexpr Shape operator-(Shape other) const {
+        return Shape{ value & ~other.value };
+    }
+
+    [[nodiscard]] constexpr Shape normalize() const {
+        if (!value)
+            return Shape{ value, SymmetryGroup::D4 };
+        auto v = value;
+        while (!(v & FIRST_ROW))
+            v >>= LEN;
+        while (!(v & FIRST_COL))
+            v >>= 1u;
+        return Shape{ v, group };
     }
 
     [[nodiscard]] constexpr auto symmetry() const {
@@ -84,8 +156,32 @@ public:
     //       =        =  true,  false, true  => rot90 CCW
     //          ?  ?  =  true,  true,  true  => flip secondary
     template <bool Swap, bool FlipX, bool FlipY>
-    [[nodiscard]] Shape transform() const;
+    [[nodiscard]] Shape transform(bool norm) const;
 
+    [[nodiscard]] std::array<Shape, 8> transforms(bool norm) const;
+
+    //   -y
+    // -x  +x
+    //   +y
+    [[nodiscard]] Shape translate(int x, int y) const;
+    [[nodiscard]] Shape translate(std::pair<int, int> d) const {
+        return translate(d.first, d.second);
+    }
+
+    constexpr auto front() const {
+        auto id = std::countr_zero(value);
+        return std::make_pair(id / LEN, id % LEN);
+    }
+    constexpr auto bits() const {
+        std::vector<std::pair<int, int>> pos;
+        for (auto v = value; v; v -= v & -v) {
+            auto id = std::countr_zero(v);
+            pos.emplace_back(id / LEN, id % LEN);
+        }
+        return pos;
+    }
+
+    // aligned to top-left, rotated/flipped if possible
     [[nodiscard]] Shape canonical_form() const;
 
     [[nodiscard]] bool connected() const;
@@ -104,11 +200,11 @@ struct std::hash<Shape> {
     }
 };
 
-extern template Shape Shape::transform<false, false, false>() const;
-extern template Shape Shape::transform<false, true,  false>() const;
-extern template Shape Shape::transform<false, false, true >() const;
-extern template Shape Shape::transform<false, true,  true >() const;
-extern template Shape Shape::transform<true,  false, false>() const;
-extern template Shape Shape::transform<true,  true,  false>() const;
-extern template Shape Shape::transform<true,  false, true >() const;
-extern template Shape Shape::transform<true,  true,  true >() const;
+extern template Shape Shape::transform<false, false, false>(bool norm) const;
+extern template Shape Shape::transform<false, true,  false>(bool norm) const;
+extern template Shape Shape::transform<false, false, true >(bool norm) const;
+extern template Shape Shape::transform<false, true,  true >(bool norm) const;
+extern template Shape Shape::transform<true,  false, false>(bool norm) const;
+extern template Shape Shape::transform<true,  true,  false>(bool norm) const;
+extern template Shape Shape::transform<true,  false, true >(bool norm) const;
+extern template Shape Shape::transform<true,  true,  true >(bool norm) const;
