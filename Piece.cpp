@@ -17,7 +17,7 @@ void Piece::cover(coords_t pos, auto &&func) const {
         if (!p.enabled)
             continue;
         auto [maxY, maxX] = p.max;
-        for (auto [bitY, bitX] : p.normal.bits()) {
+        for (auto [bitY, bitX] : p.normal) {
             if (bitX > tgtX || bitX + maxX < tgtX)
                 continue;
             if (bitY > tgtY || bitY + maxY < tgtY)

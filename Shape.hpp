@@ -219,13 +219,24 @@ public:
         auto id = std::countr_zero(value);
         return std::make_pair(id / LEN, id % LEN);
     }
-    constexpr auto bits() const {
-        std::vector<coords_t> pos;
-        for (auto v = value; v; v -= v & -v) {
+
+    struct bits_proxy {
+        shape_t v;
+        bool operator==(const bits_proxy &other) const = default;
+        constexpr coords_t operator*() {
             auto id = std::countr_zero(v);
-            pos.emplace_back(id / LEN, id % LEN);
+            return { id / LEN, id % LEN };
         }
-        return pos;
+        constexpr bits_proxy &operator++() {
+            v -= v & -v;
+            return *this;
+        }
+    };
+    constexpr bits_proxy begin() const {
+        return { value };
+    }
+    constexpr bits_proxy end() const {
+        return { 0 };
     }
 
     // aligned to top-left, rotated/flipped if possible
