@@ -1,8 +1,5 @@
 #include "Piece.hpp"
 
-#include <format>
-#include <iostream>
-
 #include <algorithm>
 #include <ranges>
 #include <stdexcept>
@@ -30,7 +27,7 @@ void Piece::cover(coords_t pos, auto &&func) const {
     }
 }
 
-Solution::Solution(std::vector<Step> history) : steps{ std::move(history) } {
+Solution::Solution(std::vector<Step> st) : steps{ std::move(st) } {
     for (auto row = 0u; row < Shape::LEN; row++) {
         map.emplace_back();
         for (auto col = 0u; col < Shape::LEN; col++) {
@@ -55,18 +52,17 @@ std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board) {
             return;
         }
         auto pos = open_tiles.front();
-        history.emplace_back(0u, Shape{ 0u });
         for (auto &&[p, u, id] : std::views::zip(lib, used, std::views::iota(0zu))) {
             if (u == p.count) continue;
             u++;
             p.cover(pos, [&](Shape placed) {
                 if (!(open_tiles >= placed)) return;
-                history.back() = Step{ id, placed };
+                history.push_back(Step{ id, placed });
                 self(open_tiles - placed);
+                history.pop_back();
             });
             u--;
         }
-        history.pop_back();
     }(board);
     return solutions;
 }

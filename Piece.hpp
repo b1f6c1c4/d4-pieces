@@ -33,7 +33,11 @@ struct Solution {
     std::vector<Step> steps;
     std::vector<std::vector<ssize_t>> map;
 
-    Solution(std::vector<Step> history);
+    explicit Solution(std::vector<Step> st);
+    Solution(const Solution &other) = default;
+    Solution(Solution &&other) noexcept = default;
+    Solution &operator=(const Solution &other) = default;
+    Solution &operator=(Solution &&other) noexcept = default;
 };
 
 std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board);
