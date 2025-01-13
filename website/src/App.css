@@ -80,15 +80,9 @@
     background-color 0.3s;
 }
 
-.sym {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(3, 1fr);
-}
-
-.sym span, .sym select {
+.sym select {
   grid-column: 1 / 5;
-  grid-column: 1 / 5;
+  grid-row: 3;
 }
 
 .App > div:first-child {
@@ -97,27 +91,213 @@
 }
 
 .sym > [title="Id"] {
-  grid-area: 2 / 1 / 3 / 2;
+  grid-area: 1 / 1 / 2 / 2;
 }
 .sym > [title="90CCW"] {
-  grid-area: 2 / 2 / 3 / 3;
+  grid-area: 1 / 2 / 2 / 3;
 }
 .sym > [title="180"] {
-  grid-area: 2 / 3 / 3 / 4;
+  grid-area: 1 / 3 / 2 / 4;
 }
 .sym > [title="90CW"] {
-  grid-area: 2 / 4 / 3 / 5;
+  grid-area: 1 / 4 / 2 / 5;
 }
 
 .sym > [title="X"] {
-  grid-area: 3 / 1 / 4 / 2;
+  grid-area: 2 / 1 / 3 / 2;
 }
 .sym > [title="P"] {
-  grid-area: 3 / 2 / 4 / 3;
+  grid-area: 2 / 2 / 3 / 3;
 }
 .sym > [title="Y"] {
-  grid-area: 3 / 3 / 4 / 4;
+  grid-area: 2 / 3 / 3 / 4;
 }
 .sym > [title="S"] {
-  grid-area: 3 / 4 / 4 / 5;
+  grid-area: 2 / 4 / 3 / 5;
+}
+
+.board > div {
+  display: inline-block;
+  border: 0.5px solid white;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.solution .board > div {
+  border-color: #333;
+}
+
+.pieces-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.piece-selector {
+  border: 1px solid #f4f4f4;
+  background-color: #fefefe;
+  border-radius: 3px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  box-shadow: 1px 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.piece-selector.disabled {
+  filter: grayscale(100%);
+}
+
+.piece-selector.disabled .tile {
+  opacity: 30%;
+}
+
+.piece-selector > .grid {
+}
+
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 0px;
+}
+
+.button-row button {
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  font-size: 12px;
+  color: #ffffff;
+  font-weight: black;
+  text-align: center;
+  font-family: Monospace;
+  font-size: 16px;
+  line-height: 16px;
+  user-select: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+  background-color: #ffccdd;
+  border: 1px solid #ff99bb;
+}
+
+.button-row :first-child {
+  border-radius: 4px 0 0 4px;
+  border-right: 0;
+}
+
+.button-row :last-child {
+  border-radius: 0 4px 4px 0;
+  border-left: 0;
+}
+
+.button-row button:hover {
+  background-color: #ff99bb;
+}
+
+.button-row input {
+  box-sizing: border-box;
+  border: 1px solid #ff99bb;
+  height: 20px;
+  flex: 1;
+  max-width: 30px;
+  text-align: center;
+}
+
+.sym {
+  display: grid;
+  grid-template-columns: repeat(4, 15px);
+  grid-template-rows: repeat(2, 15px) 1fr;
+  gap: 3px;
+}
+
+.sym > input {
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background-color: #ffecf2;
+  border: 2px solid #ff99bb;
+  border-radius: 5px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.3s ease;
+}
+
+.sym > input:disabled {
+  background-color: #787878;
+  border: 0;
+}
+
+.sym > input:checked {
+  background-color: #ff99bb;
+}
+
+.sym > input:checked::after {
+  content: '✓';
+  color: white;
+  font-size: 12px;
+  font-weight: bold;
+  position: absolute;
+  top: -3.5px;
+  left: 1.0px;
+}
+
+.piece-selector select {
+  background-color: #ff99bb;
+  border: 2px solid #ff99bb;
+  border-radius: 5px;
+  padding: 2px 4px;
+  color: white;
+  font-family: Monospace;
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease-in-out;
+  appearance: none;
+  cursor: pointer;
+  min-height: min-content;
+  flex-shrink: 0;
+}
+
+.piece-selector select:hover {
+  background-color: #ffe6f2;
+  box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+}
+
+.piece-selector select:focus {
+  outline: none;
+  border-color: #ff69b4;
+  box-shadow: 0 0 8px rgba(255, 105, 180, 0.5);
+}
+
+.piece-selector option {
+  background-color: #ffefff;
+  color: #ff69b4;
+  font-family: Monospace;
+  padding: 10px;
+}
+
+.piece-selector option:hover {
+  background-color: #ffe6f2;
+  color: #ff1493;
+}
+
+/* Add cute emoji prefix to options (for supported browsers) */
+.piece-selector option::before {
+  content: '?? ';
+}
+
+/* Custom scrollbar for select dropdown (WebKit browsers) */
+.piece-selector select::-webkit-scrollbar {
+  width: 8px;
+}
+
+.piece-selector select::-webkit-scrollbar-track {
+  background: #ffefff;
+}
+
+.piece-selector select::-webkit-scrollbar-thumb {
+  background-color: #ffb3c6;
+  border-radius: 10px;
+  border: 2px solid #ffefff;
 }

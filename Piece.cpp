@@ -1,6 +1,7 @@
 #include "Piece.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <ranges>
 #include <stdexcept>
 
@@ -46,21 +47,34 @@ std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board) {
     std::vector<Solution> solutions;
     std::vector<size_t> used(lib.size(), 0);
     std::vector<Step> history;
+    auto max_tiles = 0zu;
+    for (auto &p : lib)
+        max_tiles += p.canonical.size() * p.count;
     [&](this auto &&self, Shape open_tiles) {
+        if (open_tiles.size() > max_tiles)
+            return;
         if (!open_tiles) {
             solutions.emplace_back(history);
             return;
         }
+        auto min_tiles = std::numeric_limits<size_t>::max();
+        for (auto &&[p, u] : std::views::zip(lib, used))
+            if (u < p.count)
+                min_tiles = std::min(min_tiles, p.canonical.size());
+        if (open_tiles.size() < min_tiles)
+            return;
         auto pos = open_tiles.front();
         for (auto &&[p, u, id] : std::views::zip(lib, used, std::views::iota(0zu))) {
             if (u == p.count) continue;
             u++;
+            max_tiles -= p.canonical.size();
             p.cover(pos, [&](Shape placed) {
                 if (!(open_tiles >= placed)) return;
                 history.push_back(Step{ id, placed });
                 self(open_tiles - placed);
                 history.pop_back();
             });
+            max_tiles += p.canonical.size();
             u--;
         }
     }(board);

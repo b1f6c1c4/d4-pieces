@@ -36,7 +36,7 @@ function mulberry32(seed = Date.now()) {
 const nextHls = hlsGen(114514);
 const colors = Array(1000).fill(0).map(nextHls);
 
-const Piece = ({ shapeId, stepId, shape, reduced }) => {
+const Piece = ({ shapeId, stepId, shape, reduced, transform }) => {
   const bits = shape.value.toString(2).padStart(shape.LEN ** 2, '0').split('').reverse();
 
   const N = Math.max(shape.width, shape.height);
@@ -45,6 +45,8 @@ const Piece = ({ shapeId, stepId, shape, reduced }) => {
     gridTemplateColumns: `repeat(${N}, 20px)`,
     gridTemplateRows: `repeat(${N}, 20px)`,
     gap: '0',
+    transition: 'transform 200ms ease-out 20ms',
+    transform,
   } : {
     display: 'grid',
     gridTemplateColumns: `repeat(${shape.LEN}, 30px)`,
@@ -58,7 +60,7 @@ const Piece = ({ shapeId, stepId, shape, reduced }) => {
   }
 
   return (
-    <div style={gridStyle}>
+    <div className="grid" style={gridStyle}>
       {bits.map((bit, index) => {
         const row = Math.floor(index / shape.LEN);
         const col = index % shape.LEN;
@@ -77,10 +79,20 @@ const Piece = ({ shapeId, stepId, shape, reduced }) => {
             />
           );
         style.backgroundColor = colors[shapeId];
-        style.borderLeftWidth = col > 0 && bits[index - 1] === '1' ? '0' : '1.5px';
-        style.borderRightWidth = col < shape.LEN - 1 && bits[index + 1] === '1' ? '0' : '1.5px';
-        style.borderTopWidth = row > 0 && bits[index - shape.LEN] === '1' ? '0' : '1.5px';
-        style.borderBottomWidth = row < shape.LEN - 1 && bits[index + shape.LEN] === '1' ? '0' : '1.5px';
+        const west = col > 0 && bits[index - 1] === '1';
+        const east = col < shape.LEN - 1 && bits[index + 1] === '1';
+        const north = row > 0 && bits[index - shape.LEN] === '1';
+        const south = row < shape.LEN - 1 && bits[index + shape.LEN] === '1';
+        style.borderLeftWidth = west ? '0' : '1.5px';
+        style.borderRightWidth = east ? '0' : '1.5px';
+        style.borderTopWidth = north ? '0' : '1.5px';
+        style.borderBottomWidth = south ? '0' : '1.5px';
+        style.borderRadius = [
+          (!north && !west) ? '8px' : '0',
+          (!north && !east) ? '8px' : '0',
+          (!south && !east) ? '8px' : '0',
+          (!south && !west) ? '8px' : '0',
+        ].join(' ');
         return (
           <div
             key={index}

@@ -28,11 +28,6 @@ const Board = ({ shape, onToggle }) => {
             onClick={() => onToggle(row, col)}
             style={{
               backgroundColor: active ? 'grey' : 'black',
-              display: 'inline-block',
-              border: '1px solid white',
-              boxSizing: 'border-box',
-              margin: '0',
-              padding: '0',
             }}
           />
         );
@@ -41,7 +36,7 @@ const Board = ({ shape, onToggle }) => {
     return grid;
   };
 
-  return <div style={style}>{renderGrid()}</div>;
+  return <div className="board" style={style}>{renderGrid()}</div>;
 };
 
 export default Board;

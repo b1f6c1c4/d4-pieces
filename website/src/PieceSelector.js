@@ -28,37 +28,32 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
     }
     setSym(e.target.value);
   };
+  const sg = piece.shape.classify.constructor.name.replace(/^SymmetryGroup_/, '');
 
-
-  const containerStyle = {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '10px'
-  };
-
-  const inputContainerStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '5px'
-  };
+  const transforms = [
+    'matrix(+1, 0, 0,+1, 0, 0)',
+    'matrix(-1, 0, 0,+1, 0, 0)',
+    'matrix(+1, 0, 0,-1, 0, 0)',
+    'matrix(-1, 0, 0,-1, 0, 0)',
+    'matrix( 0,+1,+1, 0, 0, 0)',
+    'matrix( 0,+1,-1, 0, 0, 0)',
+    'matrix( 0,-1,+1, 0, 0, 0)',
+    'matrix( 0,-1,-1, 0, 0, 0)',
+  ];
 
   return (
-    <div style={containerStyle}>
-      <Piece shape={override ?? piece.shape} reduced shapeId={shapeId} />
-      <div style={inputContainerStyle}>
+    <div className={`piece-selector ${piece.count ? '' : 'disabled'}`}>
+      <div className="button-row">
         <button onClick={handleDecrease}>-</button>
         <input
-          type="number"
+          inputmode="numeric"
           value={piece.count}
           onChange={(e) => { piece.count = Number(e.target.value); onChange(); }}
-          style={{ width: '50px', textAlign: 'center' }}
         />
         <button onClick={handleIncrease}>+</button>
       </div>
+      <Piece shape={piece.shape} reduced shapeId={shapeId} transform={override} />
       <div className="sym">
-        <span>Sym: {piece.shape.classify.constructor.name.replace(/^SymmetryGroup_/, '')}</span>
         {['Id', 'X', 'Y', '180', 'P', '90CW', '90CCW', 'S'].map((s, id) => {
           const placement = piece.placements.get(id);
           return (
@@ -67,7 +62,7 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
               title={s}
               disabled={placement.duplicate}
               checked={placement.enabled}
-              onMouseEnter={() => setOverride(placement.normal)}
+              onMouseEnter={() => setOverride(transforms[id])}
               onMouseLeave={() => setOverride()}
               onChange={(e) => {
                 placement.enabled = e.target.checked;
@@ -77,7 +72,6 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
               }}/>
           );
         })}
-        <span>Placement:</span>
         <select onChange={handleSym} value={sym}>
           <option value="Custom">(Custom)</option>
           {['C1', 'C2', 'C4', 'D1_X', 'D1_Y', 'D1_P', 'D1_S', 'D2_XY', 'D2_PS', 'D4'].map(s => {
@@ -86,7 +80,7 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
             if (grp !== prod)
               return undefined;
             return (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>{s}/{sg}</option>
             );
           })}
         </select>

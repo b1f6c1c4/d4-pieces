@@ -1,16 +1,9 @@
 import React from 'react';
 import PieceSelector from './PieceSelector';
 
-const containerStyle = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '10px',
-  padding: '10px',
-};
-
 const PiecesSelector = ({ module, pieces, onChange }) => {
   return (
-    <div style={containerStyle}>
+    <div className="pieces-selector">
       {pieces.map((item, index) => (
         <PieceSelector
           key={index}
