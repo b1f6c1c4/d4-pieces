@@ -2,10 +2,10 @@
 
 #include "Shape.hpp"
 
-#include <algorithm>
-#include <ranges>
+#include <initializer_list>
+#include <vector>
 
-class Piece {
+struct Piece {
     Shape canonical;
 
     struct Placement {
@@ -14,30 +14,31 @@ class Piece {
     };
 
     std::vector<Placement> placements;
+    Piece(Shape s);
+
+    void cover(coords_t pos, auto &&func) const;
+};
+
+struct Step {
+    size_t piece_id;
+    Shape shape;
+};
+
+struct Solution {
+    std::vector<Step> steps;
+    std::vector<std::vector<ssize_t>> map;
+
+    Solution(std::vector<Step> history);
+};
+
+class Library {
+    std::vector<Piece> lib;
 
 public:
-    Piece(Shape::shape_t sh) : canonical{ Shape{ sh }.canonical_form() } {
-        for (auto sh : canonical.transforms(true)) {
-            if (std::ranges::find(placements, sh, &Placement::normal) != placements.end())
-                continue;
+    Library() { }
+    Library(std::initializer_list<Shape::shape_t> lst);
 
-            placements.emplace_back(sh,
-                    std::make_pair(Shape::LEN - sh.bottom(), Shape::LEN - sh.right()));
-        }
-    }
+    bool push(Shape sh);
 
-    void cover(coords_t pos, auto &&func) const {
-        auto [tgtY, tgtX] = pos;
-        for (auto &p : placements) {
-            auto [maxY, maxX] = pos;
-            for (auto [bitY, bitX] : p.normal.bits()) {
-                if (bitX > tgtX || bitX + maxX < tgtX)
-                    continue;
-                if (bitY > tgtY || bitY + maxY < tgtY)
-                    continue;
-                auto placed = p.normal.translate(tgtX - bitX, tgtY - bitY);
-                func(placed);
-            }
-        }
-    }
+    std::vector<Solution> solve(Shape board) const;
 };
