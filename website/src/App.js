@@ -1,9 +1,8 @@
-import logo from './logo.svg';
 import './App.css';
 import PiecesSelector from './PiecesSelector';
 import Board from './Board';
 import Solution from './Solution';
-import {useEffect, useReducer, useState} from 'react';
+import {useEffect, useState} from 'react';
 
 const moduleLoader = window.Pieces({ locateFile: () => 'pieces.wasm' });
 

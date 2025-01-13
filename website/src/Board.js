@@ -20,7 +20,6 @@ const Board = ({ shape, onToggle }) => {
   const renderGrid = () => {
     const grid = [];
     for (let row = 0; row < LEN; row++) {
-      const rowTiles = [];
       for (let col = 0; col < LEN; col++) {
         const active = isTileActive(row, col);
         grid.push(

@@ -1,4 +1,4 @@
-import React, {useReducer, useState} from 'react';
+import React, {useState} from 'react';
 import Piece from './Piece';
 
 const PieceSelector = ({ module, shapeId, piece, onChange }) => {
@@ -20,7 +20,6 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
   const handleSym = (e) => {
     if (e.target.value === 'Custom') return;
     const grp = module.SymmetryGroup[e.target.value];
-    const prod = module.groupProduct(piece.shape.classify, grp)
     for (let i = 0; i < 8; i++) {
       const placement = piece.placements.get(i);
       if (placement.duplicate) continue;
@@ -84,10 +83,11 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
           {['C1', 'C2', 'C4', 'D1_X', 'D1_Y', 'D1_P', 'D1_S', 'D2_XY', 'D2_PS', 'D4'].map(s => {
             const grp = module.SymmetryGroup[s];
             const prod = module.groupProduct(piece.shape.classify, grp)
-            if (grp == prod)
-              return (
-                <option key={s} value={s}>{s}</option>
-              );
+            if (grp !== prod)
+              return undefined;
+            return (
+              <option key={s} value={s}>{s}</option>
+            );
           })}
         </select>
       </div>

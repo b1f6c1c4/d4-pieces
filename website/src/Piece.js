@@ -62,8 +62,8 @@ const Piece = ({ shapeId, stepId, shape, reduced }) => {
       {bits.map((bit, index) => {
         const row = Math.floor(index / shape.LEN);
         const col = index % shape.LEN;
-        if (reduced && row >= shape.height) return;
-        if (reduced && col >= shape.width) return;
+        if (reduced && row >= shape.height) return undefined;
+        if (reduced && col >= shape.width) return undefined;
         const style = {
           gridColumn: col + 1,
           gridRow: row + 1,
