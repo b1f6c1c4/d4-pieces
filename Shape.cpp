@@ -1,6 +1,5 @@
 #include "Shape.hpp"
 #include <string>
-#include <fmt/format.h>
 #include <ranges>
 
 template <bool Swap, bool FlipX, bool FlipY>
@@ -96,6 +95,7 @@ SymmetryGroup Shape::classify() const {
     return SymmetryGroup::C1;
 }
 
+#ifdef FMT_VERSION
 auto fmt::formatter<SymmetryGroup>::format(SymmetryGroup c, format_context &ctx) const
     -> format_context::iterator {
     string_view name = "unknown";
@@ -123,3 +123,4 @@ auto fmt::formatter<Shape>::format(Shape c, format_context &ctx) const
     }
     return formatter<string_view>::format(txt, ctx);
 }
+#endif

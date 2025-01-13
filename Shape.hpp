@@ -1,7 +1,6 @@
 #pragma once
 
-#include <boost/integer.hpp>
-#include <fmt/base.h>
+#include <cstdint>
 #include <functional>
 #include <bit>
 #include <compare>
@@ -12,12 +11,6 @@ using coords_t = std::pair<int, int>; // Y, X
 
 enum class SymmetryGroup : uint16_t { C1, C2, C4, D1, D2, D4 };
 
-template <>
-struct fmt::formatter<SymmetryGroup> : formatter<string_view> {
-    auto format(SymmetryGroup c, format_context &ctx) const
-        -> format_context::iterator;
-};
-
 class Shape {
 public:
     static constexpr size_t LEN = 8;
@@ -25,15 +18,15 @@ public:
     // [4] ...
     // [8] ...
     // [12] ...    [MSB]
-    using shape_t = boost::uint_t<LEN * LEN>::least;
+    using shape_t = uint64_t;
 
 private:
     static constexpr size_t BITS = sizeof(shape_t) * 8;
 
-    static constexpr size_t FULL = static_cast<shape_t>(
+    static constexpr shape_t FULL = static_cast<shape_t>(
             LEN * LEN == BITS ? ~0ull : (1ull << (LEN * LEN % BITS)) - 1ull);
-    static constexpr size_t FIRST_ROW = static_cast<shape_t>((1ull << LEN) - 1ull);
-    static constexpr size_t FIRST_COL = [] constexpr {
+    static constexpr shape_t FIRST_ROW = static_cast<shape_t>((1ull << LEN) - 1ull);
+    static constexpr shape_t FIRST_COL = [] constexpr {
         shape_t total{};
         shape_t mask{ 1 };
         for (auto i = 0zu; i < LEN; i++)
@@ -69,6 +62,8 @@ public:
             return std::partial_ordering::greater;
         return std::partial_ordering::unordered;
     }
+
+    [[nodiscard]] constexpr shape_t get_value() const { return value; }
 
     [[nodiscard]] constexpr size_t size() const {
         return std::popcount(value);
@@ -190,11 +185,18 @@ public:
     [[nodiscard]] bool connected() const;
 };
 
+#ifdef FMT_VERSION
+template <>
+struct fmt::formatter<SymmetryGroup> : formatter<string_view> {
+    auto format(SymmetryGroup c, format_context &ctx) const
+        -> format_context::iterator;
+};
 template <>
 struct fmt::formatter<Shape> : formatter<string_view> {
     auto format(Shape c, format_context &ctx) const
         -> format_context::iterator;
 };
+#endif
 
 template <>
 struct std::hash<Shape> {

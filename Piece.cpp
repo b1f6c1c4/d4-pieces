@@ -63,14 +63,14 @@ std::vector<Solution> Library::solve(Shape board) const {
     std::vector<Solution> solutions;
     std::vector<char> used(lib.size(), false);
     std::vector<Step> history;
-    [&,this](this auto &&self, Shape open_tiles) {
+    [&,that=this](this auto &&self, Shape open_tiles) {
         if (!open_tiles) {
             solutions.emplace_back(history);
             return;
         }
         auto pos = open_tiles.front();
         history.emplace_back(0u, Shape{ 0u });
-        for (auto &&[p, u, id] : std::views::zip(lib, used, std::views::iota(0zu))) {
+        for (auto &&[p, u, id] : std::views::zip(that->lib, used, std::views::iota(0zu))) {
             if (u) continue;
             u = true;
             p.cover(pos, [&](Shape placed) {
