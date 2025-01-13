@@ -6,6 +6,9 @@
 #include <vector>
 
 struct Piece {
+    size_t count;
+
+private:
     Shape canonical;
 
     struct Placement {
@@ -14,8 +17,12 @@ struct Piece {
     };
 
     std::vector<Placement> placements;
-    Piece(Shape s);
 
+    friend class Library;
+
+public:
+    Piece(Shape s);
+    [[nodiscard]] Shape shape() const { return canonical; }
     void cover(coords_t pos, auto &&func) const;
 };
 
@@ -38,7 +45,9 @@ public:
     Library() { }
     Library(std::initializer_list<Shape::shape_t> lst);
 
-    bool push(Shape sh);
+    void push(Shape sh);
+    [[nodiscard]] auto size() const { return lib.size(); }
+    [[nodiscard]] auto &at(size_t i) { return lib[i]; }
 
     std::vector<Solution> solve(Shape board) const;
 };

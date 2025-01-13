@@ -1,23 +1,25 @@
 #include "Piece.hpp"
 
+#include <format>
+#include <iostream>
+
 #include <algorithm>
 #include <ranges>
 #include <stdexcept>
 
-Piece::Piece(Shape s) : canonical{ s } {
+Piece::Piece(Shape s) : count{ 1 }, canonical{ s } {
     for (auto sh : canonical.transforms(true)) {
         if (std::ranges::find(placements, sh, &Placement::normal) != placements.end())
             continue;
 
-        placements.emplace_back(sh,
-                std::make_pair(Shape::LEN - sh.bottom(), Shape::LEN - sh.right()));
+        placements.emplace_back(sh, std::make_pair(sh.bottom(), sh.right()));
     }
 }
 
 void Piece::cover(coords_t pos, auto &&func) const {
     auto [tgtY, tgtX] = pos;
     for (auto &p : placements) {
-        auto [maxY, maxX] = pos;
+        auto [maxY, maxX] = p.max;
         for (auto [bitY, bitX] : p.normal.bits()) {
             if (bitX > tgtX || bitX + maxX < tgtX)
                 continue;
@@ -30,18 +32,17 @@ void Piece::cover(coords_t pos, auto &&func) const {
 
 Library::Library(std::initializer_list<Shape::shape_t> lst) {
     for (auto sh : lst)
-        if (!push(Shape{ sh }))
-            throw std::runtime_error{ "Duplicate" };
+        push(Shape{ sh });
 }
 
 // O(n^2) push, won't fix
-bool Library::push(Shape sh) {
+void Library::push(Shape sh) {
     sh = sh.canonical_form();
-    if (std::ranges::find(lib, sh, &Piece::canonical) != lib.end())
-        return false;
-
-    lib.emplace_back(sh);
-    return true;
+    if (auto it = std::ranges::find(lib, sh, &Piece::canonical); it != lib.end()) {
+        it->count++;
+    } else {
+        lib.emplace_back(sh);
+    }
 }
 
 Solution::Solution(std::vector<Step> history) : steps{ std::move(history) } {
@@ -61,7 +62,7 @@ Solution::Solution(std::vector<Step> history) : steps{ std::move(history) } {
 
 std::vector<Solution> Library::solve(Shape board) const {
     std::vector<Solution> solutions;
-    std::vector<char> used(lib.size(), false);
+    std::vector<size_t> used(lib.size(), 0);
     std::vector<Step> history;
     [&,that=this](this auto &&self, Shape open_tiles) {
         if (!open_tiles) {
@@ -71,14 +72,14 @@ std::vector<Solution> Library::solve(Shape board) const {
         auto pos = open_tiles.front();
         history.emplace_back(0u, Shape{ 0u });
         for (auto &&[p, u, id] : std::views::zip(that->lib, used, std::views::iota(0zu))) {
-            if (u) continue;
-            u = true;
+            if (u == p.count) continue;
+            u++;
             p.cover(pos, [&](Shape placed) {
                 if (!(open_tiles >= placed)) return;
                 history.back() = Step{ id, placed };
                 self(open_tiles - placed);
             });
-            u = false;
+            u--;
         }
         history.pop_back();
     }(board);

@@ -14,6 +14,8 @@ enum class SymmetryGroup : uint16_t { C1, C2, C4, D1, D2, D4 };
 class Shape {
 public:
     static constexpr size_t LEN = 8;
+    [[nodiscard]] auto get_LEN() const { return LEN; }
+
     // [LSB] [1] [2] [3]
     // [4] ...
     // [8] ...

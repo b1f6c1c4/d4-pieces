@@ -18,5 +18,5 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 
-add_executable(piece wasm.cpp Piece.cpp Shape.cpp)
-target_link_libraries(piece PRIVATE embind)
+add_executable(pieces wasm.cpp Piece.cpp Shape.cpp)
+target_link_libraries(pieces PRIVATE embind)
