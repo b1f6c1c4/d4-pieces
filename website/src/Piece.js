@@ -36,7 +36,7 @@ function mulberry32(seed = Date.now()) {
 const nextHls = hlsGen(114514);
 const colors = Array(1000).fill(0).map(nextHls);
 
-const Piece = ({ shapeId, stepId, shape, reduced, transform }) => {
+const Piece = ({ shapeId, stepId, shape, reduced, transform, onToggle }) => {
   const bits = shape.value.toString(2).padStart(shape.LEN ** 2, '0').split('').reverse();
 
   const N = Math.max(shape.width, shape.height);
@@ -57,7 +57,7 @@ const Piece = ({ shapeId, stepId, shape, reduced, transform }) => {
   };
 
   return (
-    <div className="grid" style={gridStyle}>
+    <div className="grid" style={gridStyle} onClick={onToggle}>
       {bits.map((bit, index) => {
         const row = Math.floor(index / shape.LEN);
         const col = index % shape.LEN;
@@ -80,10 +80,14 @@ const Piece = ({ shapeId, stepId, shape, reduced, transform }) => {
         const east = col < shape.LEN - 1 && bits[index + 1] === '1';
         const north = row > 0 && bits[index - shape.LEN] === '1';
         const south = row < shape.LEN - 1 && bits[index + shape.LEN] === '1';
-        style.borderLeftWidth = west ? '0' : '1.5px';
-        style.borderRightWidth = east ? '0' : '1.5px';
-        style.borderTopWidth = north ? '0' : '1.5px';
-        style.borderBottomWidth = south ? '0' : '1.5px';
+        style.borderLeftWidth = west ? '1px' : '1.5px';
+        style.borderRightWidth = east ? '1px' : '1.5px';
+        style.borderTopWidth = north ? '1px' : '1.5px';
+        style.borderBottomWidth = south ? '1px' : '1.5px';
+        style.borderLeftColor = west ? '#7772' : 'unset';
+        style.borderRightColor = east ? '#7772' : 'unset';
+        style.borderTopColor = north ? '#7772' : 'unset';
+        style.borderBottomColor = south ? '#7772' : 'unset';
         style.borderRadius = [
           (!north && !west) ? '8px' : '0',
           (!north && !east) ? '8px' : '0',

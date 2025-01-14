@@ -52,7 +52,12 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
         />
         <button onClick={handleIncrease}>+</button>
       </div>
-      <Piece shape={piece.shape} reduced shapeId={shapeId} transform={override} />
+      <Piece shape={piece.shape} reduced shapeId={shapeId} transform={override}
+        onToggle={() => {
+          if (piece.count < 2)
+            piece.count = !piece.count;
+          onChange();
+        }} />
       <div className="sym">
         {['Id', 'X', 'Y', '180', 'P', '90CW', '90CCW', 'S'].map((s, id) => {
           const placement = piece.placements.get(id);

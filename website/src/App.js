@@ -17,19 +17,28 @@ function App() {
     moduleLoader.then((module) => {
       window.Pieces = module;
       setModule(module);
-      setPieces([
-        0b1111000010000000,
-        0b1110000000110000,
-        0b011000000100000011000000,
-        0b100000001000000011100000,
-        0b1110000011100000,
-        0b1110000011000000,
-        0b1110000010100000,
-        0b1111000000100000,
-      ].map((sh) => new module.Piece(new module.Shape(sh).normalize())));
+      const pieces = [];
+      for (let n = 1; n <= 8; n++) {
+        const m = module.shape_count(n);
+        for (let i = 0; i < m; i++) {
+          const p = new module.Piece(module.shape_at(n, i));
+          p.count = 0;
+          pieces.push(p);
+        }
+      }
+      setPieces(pieces)
       setBoard(new module.Shape(window.BigInt('0b111011111110111111101111111011111110011111100111111')));
     });
   }, []);
+
+  const handleToggle = (func) => () => {
+    const p = pieces.find(func);
+    if (p.count)
+      pieces.filter(func).forEach(p => p.count = 0);
+    else
+      pieces.filter(func).forEach(p => p.count = 1);
+    setPieces([...pieces]);
+  };
 
   return (
     <div className="App">
@@ -49,7 +58,7 @@ function App() {
           setSolution(undefined);
           setTimeout(() => {
             const vec = new module.VPiece();
-            pieces.forEach(p => vec.push_back(p));
+            pieces.forEach(p => p.count && vec.push_back(p));
             setSolution(module.solve(vec, board));
             setSolutionId(0);
           }, 100);
@@ -67,6 +76,16 @@ function App() {
             style={{ width: '50px', textAlign: 'center' }}
           />
         )}
+      </div>
+      <div className="button-row">
+        <button onClick={handleToggle((p) => p.shape.size === 1)}>1</button>
+        <button onClick={handleToggle((p) => p.shape.size === 2)}>2</button>
+        <button onClick={handleToggle((p) => p.shape.size === 3)}>3</button>
+        <button onClick={handleToggle((p) => p.shape.size === 4)}>4</button>
+        <button onClick={handleToggle((p) => p.shape.size === 5)}>5</button>
+        <button onClick={handleToggle((p) => p.shape.size === 6)}>6</button>
+        <button onClick={handleToggle((p) => p.shape.size === 7)}>7</button>
+        <button onClick={handleToggle((p) => p.shape.size === 8)}>8</button>
       </div>
       <PiecesSelector
         module={module}

@@ -6,6 +6,9 @@ using namespace emscripten;
 #include "Shape.hpp"
 #include "Piece.hpp"
 
+extern size_t shape_count(size_t n);
+extern Shape shape_at(size_t n, size_t i);
+
 EMSCRIPTEN_BINDINGS(pieces) {
     register_vector<Step>("VStep");
     register_vector<ssize_t>("VSSize");
@@ -43,6 +46,7 @@ EMSCRIPTEN_BINDINGS(pieces) {
         .constructor<Shape::shape_t>()
         .property("LEN", &Shape::get_LEN)
         .property("value", &Shape::get_value)
+        .property("size", &Shape::size)
         .function("normalize", &Shape::normalize)
         .function("canonical_form", &Shape::canonical_form)
         .property("classify", &Shape::classify)
@@ -80,4 +84,6 @@ EMSCRIPTEN_BINDINGS(pieces) {
         .property("steps", &Solution::steps, return_value_policy::reference())
         .property("map", &Solution::map, return_value_policy::reference())
         ;
+    function("shape_count", &::shape_count);
+    function("shape_at", &::shape_at);
 }
