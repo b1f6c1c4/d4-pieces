@@ -12,7 +12,7 @@ Piece::Piece(Shape s) : count{ 1 }, canonical{ s } {
     }
 }
 
-void Piece::cover(coords_t pos, auto &&func) const {
+bool Piece::cover(coords_t pos, auto &&func) const {
     auto [tgtY, tgtX] = pos;
     for (auto &&[p, trs] : std::views::zip(placements, std::views::iota(0zu))) {
         if (!p.enabled)
@@ -25,9 +25,11 @@ void Piece::cover(coords_t pos, auto &&func) const {
                 continue;
             auto x = tgtX - bitX;
             auto y = tgtY - bitY;
-            func(p.normal.translate(x, y), trs, coords_t{ y, x });
+            if (func(p.normal.translate(x, y), trs, coords_t{ y, x }))
+                return true;
         }
     }
+    return false;
 }
 
 Solution::Solution(std::vector<Step> st) : steps{ std::move(st) } {
@@ -45,7 +47,30 @@ Solution::Solution(std::vector<Step> st) : steps{ std::move(st) } {
     }
 }
 
-std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board) {
+Step make_step(size_t id, size_t trs, coords_t tra, Shape placed) {
+    int a{}, b{}, c{}, d{};
+    switch (trs) {
+        case 0: a = +1, d = +1; break;
+        case 1: a = -1, d = +1; break;
+        case 2: a = +1, d = -1; break;
+        case 3: a = -1, d = -1; break;
+        case 4: b = +1, c = +1; break;
+        case 5: b = -1, c = +1; break;
+        case 6: b = +1, c = -1; break;
+        case 7: b = -1, c = -1; break;
+    }
+    return Step{ id, trs, a, b, c, d, tra.second, tra.first, placed };
+}
+
+size_t min_tiles(const std::vector<Piece> &lib, const std::vector<size_t> &used) {
+    auto m = std::numeric_limits<size_t>::max();
+    for (auto &&[p, u] : std::views::zip(lib, used))
+        if (u < p.count)
+            m = std::min(m, p.canonical.size());
+    return m;
+}
+
+std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board, bool single) {
     std::vector<Solution> solutions;
     std::vector<size_t> used(lib.size(), 0);
     std::vector<Step> history;
@@ -54,43 +79,30 @@ std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board) {
         max_tiles += p.canonical.size() * p.count;
     [&](this auto &&self, Shape open_tiles) {
         if (open_tiles.size() > max_tiles)
-            return;
+            return false;
         if (!open_tiles) {
             solutions.emplace_back(history);
-            return;
+            return single;
         }
-        auto min_tiles = std::numeric_limits<size_t>::max();
-        for (auto &&[p, u] : std::views::zip(lib, used))
-            if (u < p.count)
-                min_tiles = std::min(min_tiles, p.canonical.size());
-        if (open_tiles.size() < min_tiles)
-            return;
+        if (open_tiles.size() < min_tiles(lib, used))
+            return false;
         auto pos = open_tiles.front();
         for (auto &&[p, u, id] : std::views::zip(lib, used, std::views::iota(0zu))) {
             if (u == p.count) continue;
             u++;
             max_tiles -= p.canonical.size();
-            p.cover(pos, [&](Shape placed, size_t trs, coords_t tra) {
-                if (!(open_tiles >= placed)) return;
-                int a{}, b{}, c{}, d{};
-                switch (trs) {
-                    case 0: a = +1, d = +1; break;
-                    case 1: a = -1, d = +1; break;
-                    case 2: a = +1, d = -1; break;
-                    case 3: a = -1, d = -1; break;
-                    case 4: b = +1, c = +1; break;
-                    case 5: b = -1, c = +1; break;
-                    case 6: b = +1, c = -1; break;
-                    case 7: b = -1, c = -1; break;
-                }
-                history.push_back(Step{
-                    id, trs, a, b, c, d, tra.second, tra.first, placed });
-                self(open_tiles - placed);
+            if (p.cover(pos, [&](Shape placed, size_t trs, coords_t tra) {
+                if (!(open_tiles >= placed)) return false;
+                history.push_back(make_step(id, trs, tra, placed));
+                auto f = self(open_tiles - placed);
                 history.pop_back();
-            });
+                return f;
+            }))
+                return true;
             max_tiles += p.canonical.size();
             u--;
         }
+        return false;
     }(board);
     return solutions;
 }

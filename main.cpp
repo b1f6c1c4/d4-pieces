@@ -32,7 +32,7 @@ int main() {
             auto d = day;
             auto solutions = solve(pieces, board
                     .clear((m - 1) / 6, (m - 1) % 6)
-                    .clear((d - 1) / 7 + 2, (d - 1) % 7));
+                    .clear((d - 1) / 7 + 2, (d - 1) % 7), false);
             std::print(std::cout, "{:02}/{:02} => {} solutions\n", m, d, solutions.size());
         }
     }

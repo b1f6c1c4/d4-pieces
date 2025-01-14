@@ -19,6 +19,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 
 add_executable(pieces wasm.cpp Piece.cpp Shape.cpp known.cpp)
 target_link_options(pieces PRIVATE -sWASM_BIGINT)
+target_link_options(pieces PRIVATE -sASSERTIONS)
 target_link_options(pieces PRIVATE -sALLOW_MEMORY_GROWTH=1)
 target_link_options(pieces PRIVATE -sENVIRONMENT=web)
 target_link_options(pieces PRIVATE -sMODULARIZE=1)

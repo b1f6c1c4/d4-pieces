@@ -21,7 +21,7 @@ struct Piece {
     friend class Library;
 
     Piece(Shape s);
-    void cover(coords_t pos, auto &&func) const;
+    bool cover(coords_t pos, auto &&func) const;
 };
 
 struct Step {
@@ -41,4 +41,4 @@ struct Solution {
     Solution &operator=(Solution &&other) noexcept = default;
 };
 
-std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board);
+std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board, bool single);

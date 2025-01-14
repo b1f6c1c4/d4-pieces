@@ -9,6 +9,7 @@ const moduleLoader = window.Pieces({ locateFile: () => 'pieces.wasm' });
 function App() {
   const [module, setModule] = useState();
   const [pieces, setPieces] = useState([]);
+  const [library, setLibrary] = useState([]);
   const [board, setBoard] = useState(undefined);
   const [solution, setSolution] = useState(undefined);
   const [solutionId, setSolutionId] = useState(0);
@@ -40,6 +41,23 @@ function App() {
     setPieces([...pieces]);
   };
 
+  const handleSolve = (full) => () => {
+    setSolution(undefined);
+    setTimeout(() => {
+      const vec = new module.VPiece();
+      const lib = [];
+      pieces.forEach((p,i) => {
+        if (p.count) {
+          vec.push_back(p);
+          lib.push({ p, i });
+        }
+      });
+      setLibrary(lib);
+      setSolution(module.solve(vec, board, full));
+      setSolutionId(0);
+    }, 100);
+  };
+
   return (
     <div className="App">
       <div>
@@ -50,19 +68,12 @@ function App() {
             setBoard(board.set(row, col));
         }} />)}
         {solution && solution.size() && (
-          <Solution pieces={pieces} board={board} solution={solution.get(solutionId)} />
+          <Solution pieces={library} board={board} solution={solution.get(solutionId)} />
         )}
       </div>
       <div>
-        <button onClick={() => {
-          setSolution(undefined);
-          setTimeout(() => {
-            const vec = new module.VPiece();
-            pieces.forEach(p => p.count && vec.push_back(p));
-            setSolution(module.solve(vec, board));
-            setSolutionId(0);
-          }, 100);
-        }}>Solve!</button>
+        <button onClick={handleSolve(true)}>Solve!</button>
+        <button onClick={handleSolve(false)}>Solve All!</button>
         {solution && (
           <span>{solution.size()} Solutions found!</span>
         )}
