@@ -41,7 +41,7 @@ function App() {
             setBoard(board.set(row, col));
         }} />)}
         {solution && solution.size() && (
-          <Solution board={board} solution={solution.get(solutionId)} />
+          <Solution pieces={pieces} board={board} solution={solution.get(solutionId)} />
         )}
       </div>
       <div>

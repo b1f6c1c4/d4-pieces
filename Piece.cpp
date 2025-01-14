@@ -14,7 +14,7 @@ Piece::Piece(Shape s) : count{ 1 }, canonical{ s } {
 
 void Piece::cover(coords_t pos, auto &&func) const {
     auto [tgtY, tgtX] = pos;
-    for (auto &p : placements) {
+    for (auto &&[p, trs] : std::views::zip(placements, std::views::iota(0zu))) {
         if (!p.enabled)
             continue;
         auto [maxY, maxX] = p.max;
@@ -23,7 +23,9 @@ void Piece::cover(coords_t pos, auto &&func) const {
                 continue;
             if (bitY > tgtY || bitY + maxY < tgtY)
                 continue;
-            func(p.normal.translate(tgtX - bitX, tgtY - bitY));
+            auto x = tgtX - bitX;
+            auto y = tgtY - bitY;
+            func(p.normal.translate(x, y), trs, coords_t{ y, x });
         }
     }
 }
@@ -68,9 +70,21 @@ std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board) {
             if (u == p.count) continue;
             u++;
             max_tiles -= p.canonical.size();
-            p.cover(pos, [&](Shape placed) {
+            p.cover(pos, [&](Shape placed, size_t trs, coords_t tra) {
                 if (!(open_tiles >= placed)) return;
-                history.push_back(Step{ id, placed });
+                int a{}, b{}, c{}, d{};
+                switch (trs) {
+                    case 0: a = +1, d = +1; break;
+                    case 1: a = -1, d = +1; break;
+                    case 2: a = +1, d = -1; break;
+                    case 3: a = -1, d = -1; break;
+                    case 4: b = +1, c = +1; break;
+                    case 5: b = -1, c = +1; break;
+                    case 6: b = +1, c = -1; break;
+                    case 7: b = -1, c = -1; break;
+                }
+                history.push_back(Step{
+                    id, trs, a, b, c, d, tra.second, tra.first, placed });
                 self(open_tiles - placed);
                 history.pop_back();
             });

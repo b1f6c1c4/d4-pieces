@@ -25,7 +25,8 @@ struct Piece {
 };
 
 struct Step {
-    size_t piece_id;
+    size_t piece_id, trs_id;
+    int a, b, c, d, x, y;
     Shape shape;
 };
 

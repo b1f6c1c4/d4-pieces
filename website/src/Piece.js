@@ -52,12 +52,9 @@ const Piece = ({ shapeId, stepId, shape, reduced, transform }) => {
     gridTemplateColumns: `repeat(${shape.LEN}, 30px)`,
     gridTemplateRows: `repeat(${shape.LEN}, 30px)`,
     gap: '0',
+    transition: `transform 300ms cubic-bezier(1, 0.5, 0, 0.8) ${3 * stepId}ms`,
+    transform,
   };
-  if (stepId !== undefined) {
-    const dur = 0.9;
-    const del = 0.1 * stepId;
-    gridStyle.animation = `${dur}s ease-out ${del}s 1 normal backwards slide-in`;
-  }
 
   return (
     <div className="grid" style={gridStyle}>

@@ -74,12 +74,6 @@
   border-style: solid;
 }
 
-.overlay .tile {
-  transition:
-    opacity 0.3s,
-    background-color 0.3s;
-}
-
 .sym select {
   grid-column: 1 / 5;
   grid-row: 3;
@@ -300,4 +294,8 @@
   background-color: #ffb3c6;
   border-radius: 10px;
   border: 2px solid #ffefff;
+}
+
+.overlay {
+  pointer-events: none;
 }

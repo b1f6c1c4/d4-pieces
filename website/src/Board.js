@@ -25,7 +25,7 @@ const Board = ({ shape, onToggle }) => {
         grid.push(
           <div
             key={`${row}-${col}`}
-            onClick={() => onToggle(row, col)}
+            onClick={() => onToggle && onToggle(row, col)}
             style={{
               backgroundColor: active ? 'grey' : 'black',
             }}
