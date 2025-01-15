@@ -80,18 +80,18 @@ const Piece = ({ shapeId, stepId, shape, reduced, transform, onToggle }) => {
         const east = col < shape.LEN - 1 && bits[index + 1] === '1';
         const north = row > 0 && bits[index - shape.LEN] === '1';
         const south = row < shape.LEN - 1 && bits[index + shape.LEN] === '1';
-        style.borderLeftWidth   = west  ? '1px'   : '1.5px';
-        style.borderRightWidth  = east  ? '1px'   : '1.5px';
-        style.borderTopWidth    = north ? '1px'   : '1.5px';
-        style.borderBottomWidth = south ? '1px'   : '1.5px';
-        style.marginLeft        = west  ? '0'   : '1px';
-        style.marginRight       = east  ? '0'   : '1px';
-        style.marginTop         = north ? '0'   : '1px';
-        style.marginBottom      = south ? '0'   : '1px';
-        style.borderLeftColor   = west  ? 'var(--slit)' : 'unset';
-        style.borderRightColor  = east  ? 'var(--slit)' : 'unset';
-        style.borderTopColor    = north ? 'var(--slit)' : 'unset';
-        style.borderBottomColor = south ? 'var(--slit)' : 'unset';
+        style.borderLeftWidth   = west  ? '1px'   : '2px';
+        style.borderRightWidth  = east  ? '1px'   : '2px';
+        style.borderTopWidth    = north ? '1px'   : '2px';
+        style.borderBottomWidth = south ? '1px'   : '2px';
+        style.marginLeft        = west  ? '0'   : '0.2px';
+        style.marginRight       = east  ? '0'   : '0.2px';
+        style.marginTop         = north ? '0'   : '0.2px';
+        style.marginBottom      = south ? '0'   : '0.2px';
+        style.borderLeftColor   = west  ? 'var(--slit)' : `color-mix(in srgb, ${colors[shapeId]}, black 20%)`;
+        style.borderRightColor  = east  ? 'var(--slit)' : `color-mix(in srgb, ${colors[shapeId]}, black 20%)`;
+        style.borderTopColor    = north ? 'var(--slit)' : `color-mix(in srgb, ${colors[shapeId]}, black 20%)`;
+        style.borderBottomColor = south ? 'var(--slit)' : `color-mix(in srgb, ${colors[shapeId]}, black 20%)`;
         style.borderRadius = [
           (!north && !west) ? '8px' : '0',
           (!north && !east) ? '8px' : '0',

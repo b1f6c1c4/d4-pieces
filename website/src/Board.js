@@ -5,8 +5,8 @@ const Board = ({ shape, onToggle }) => {
 
   const style = {
     display: 'grid',
-    gridTemplateColumns: `10px 5px repeat(${shape.LEN}, 30px) 5px 10px`,
-    gridTemplateRows: `10px 5px repeat(${shape.LEN}, 30px) 5px 10px`,
+    gridTemplateColumns: `5px repeat(${shape.LEN}, 30px) 5px`,
+    gridTemplateRows: `5px repeat(${shape.LEN}, 30px) 5px`,
     gap: '0',
   };
 
@@ -23,17 +23,11 @@ const Board = ({ shape, onToggle }) => {
   // Render the grid
   const renderGrid = (extra) => {
     const grid = [];
-    for (let row = -2; row <= LEN + 1; row++) {
-      for (let col = -2; col <= LEN + 1; col++) {
-        if (row < -1 || row >= shape.LEN + 1 || col < -1 || col >= shape.LEN + 1) {
-          grid.push(
-            <div className="padding2" />
-          );
-          continue;
-        }
+    for (let row = -1; row <= LEN; row++) {
+      for (let col = -1; col <= LEN; col++) {
         if (row < 0 || row >= shape.LEN || col < 0 || col >= shape.LEN) {
           grid.push(
-            <div className="padding" />
+            <div key={`${row}-${col}`} className="padding" />
           );
           continue;
         }

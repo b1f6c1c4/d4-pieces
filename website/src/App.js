@@ -18,12 +18,23 @@ function App() {
     moduleLoader.then((module) => {
       window.Pieces = module;
       setModule(module);
+      const knowns = [
+        0b1111000010000000,
+        0b1110000000110000,
+        0b011000000100000011000000,
+        0b100000001000000011100000,
+        0b1110000011100000,
+        0b1110000011000000,
+        0b1110000010100000,
+        0b1111000000100000,
+      ].map(v => new module.Shape(v).canonical_form(0b11111111).value);
       const pieces = [];
       for (let n = 1; n <= 8; n++) {
         const m = module.shape_count(n);
         for (let i = 0; i < m; i++) {
           const p = new module.Piece(module.shape_at(n, i));
-          p.count = 0;
+          p.group = p.shape.classify;
+          p.count = knowns.includes(p.shape.value);
           pieces.push(p);
         }
       }
@@ -34,11 +45,23 @@ function App() {
 
   const handleToggle = (func) => () => {
     const p = pieces.find(func);
-    if (p.count)
-      pieces.filter(func).forEach(p => p.count = 0);
-    else
-      pieces.filter(func).forEach(p => p.count = 1);
-    setPieces([...pieces]);
+    if (!p) {
+      console.error('Unexpected');
+      return;
+    }
+    const set = !p.count;
+    const next = [];
+    for (let i = 0; i < pieces.length; i++) {
+      if (func(pieces[i])) {
+        const p = pieces[i].clone();
+        p.group = pieces[i].group;
+        p.count = set;
+        next.push(p);
+      } else {
+        next.push(pieces[i]);
+      }
+    }
+    setPieces(next);
   };
 
   const handleSolve = (full) => () => {
@@ -67,17 +90,17 @@ function App() {
           else
             setBoard(board.set(row, col));
         }} />)}
-        {solution && solution.size() && (
+        {(solution && solution.size()) ? (
           <Solution pieces={library} board={board} solution={solution.get(solutionId)} />
-        )}
+        ) : undefined}
       </div>
-      <div>
+      <div className="status-row">
         <button onClick={handleSolve(true)}>Solve!</button>
         <button onClick={handleSolve(false)}>Solve All!</button>
         {solution && (
           <span>{solution.size()} Solutions found!</span>
         )}
-        {solution && solution.size() && (
+        {(solution && solution.size()) ? (
           <input
             type="number"
             max={solution.size() - 1}
@@ -86,22 +109,42 @@ function App() {
             onChange={(e) => setSolutionId(+e.target.value)}
             style={{ width: '50px', textAlign: 'center' }}
           />
-        )}
+        ) : undefined}
       </div>
       <div className="button-row">
-        <button onClick={handleToggle((p) => p.shape.size === 1)}>1</button>
-        <button onClick={handleToggle((p) => p.shape.size === 2)}>2</button>
-        <button onClick={handleToggle((p) => p.shape.size === 3)}>3</button>
-        <button onClick={handleToggle((p) => p.shape.size === 4)}>4</button>
-        <button onClick={handleToggle((p) => p.shape.size === 5)}>5</button>
-        <button onClick={handleToggle((p) => p.shape.size === 6)}>6</button>
-        <button onClick={handleToggle((p) => p.shape.size === 7)}>7</button>
-        <button onClick={handleToggle((p) => p.shape.size === 8)}>8</button>
+        <div class="button">
+          <span onClick={handleToggle((p) => true)}>All</span>
+          <button onClick={handleToggle((p) => p.shape.size === 1)}>1</button>
+          <button onClick={handleToggle((p) => p.shape.size === 2)}>2</button>
+          <button onClick={handleToggle((p) => p.shape.size === 3)}>3</button>
+          <button onClick={handleToggle((p) => p.shape.size === 4)}>4</button>
+          <button onClick={handleToggle((p) => p.shape.size === 5)}>5</button>
+          <button onClick={handleToggle((p) => p.shape.size === 6)}>6</button>
+          <button onClick={handleToggle((p) => p.shape.size === 7)}>7</button>
+          <button onClick={handleToggle((p) => p.shape.size === 8)}>8</button>
+        </div>
+        <div class="button">
+          <span onClick={handleToggle((p) => [module.SymmetryGroup.C1, module.SymmetryGroup.C2, module.SymmetryGroup.C4].includes(p.group) )}>C</span>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.C1   )}>1</button>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.C2   )}>2</button>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.C4   )}>4</button>
+        </div>
+        <div class="button">
+          <span onClick={handleToggle((p) => [module.SymmetryGroup.D1_X, module.SymmetryGroup.D1_Y, module.SymmetryGroup.D1_P, module.SymmetryGroup.D1_S].includes(p.group) )}>D1</span>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.D1_X )}>X</button>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.D1_Y )}>Y</button>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.D1_P )}>P</button>
+        </div>
+        <div class="button">
+          <span onClick={handleToggle((p) => [module.SymmetryGroup.D2_XY, module.SymmetryGroup.D2_PS].includes(p.group) )}>D2</span>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.D2_XY)}>XY</button>
+          <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.D2_PS)}>PS</button>
+        </div>
+        <button onClick={handleToggle((p) => p.group === module.SymmetryGroup.D4   )}>D4</button>
       </div>
       <PiecesSelector
         module={module}
         pieces={pieces}
-        onChange={() => setPieces([...pieces])}
       />
     </div>
   );

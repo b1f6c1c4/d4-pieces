@@ -1,20 +1,21 @@
-import React, {useState} from 'react';
+import React, {useReducer, useState} from 'react';
 import Piece from './Piece';
 
-const PieceSelector = ({ module, shapeId, piece, onChange }) => {
+const PieceSelector = ({ module, shapeId, piece }) => {
   const [override, setOverride] = useState(undefined);
   const [sym, setSym] = useState('D4');
+  const [_, lolUpdate] = useReducer(a => a + 1, 0);
 
   const handleDecrease = () => {
     if (piece.count > 0) {
       piece.count--;
-      onChange();
+      lolUpdate();
     }
   };
 
   const handleIncrease = () => {
     piece.count++;
-    onChange();
+    lolUpdate();
   };
 
   const handleSym = (e) => {
@@ -48,7 +49,7 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
         <input
           inputmode="numeric"
           value={piece.count}
-          onChange={(e) => { piece.count = Number(e.target.value); onChange(); }}
+          onChange={(e) => { piece.count = Number(e.target.value); lolUpdate(); }}
         />
         <button onClick={handleIncrease}>+</button>
       </div>
@@ -56,7 +57,7 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
         onToggle={() => {
           if (piece.count < 2)
             piece.count = !piece.count;
-          onChange();
+          lolUpdate();
         }} />
       <div className="sym">
         {['Id', 'X', 'Y', '180', 'P', '90CW', '90CCW', 'S'].map((s, id) => {
@@ -73,7 +74,7 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
                 placement.enabled = e.target.checked;
                 piece.placements.set(id, placement);
                 setSym('Custom');
-                onChange();
+                lolUpdate();
               }}/>
           );
         })}
@@ -94,4 +95,4 @@ const PieceSelector = ({ module, shapeId, piece, onChange }) => {
   );
 };
 
-export default PieceSelector;
+export default React.memo(PieceSelector);

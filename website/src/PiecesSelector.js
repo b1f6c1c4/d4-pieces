@@ -1,7 +1,7 @@
 import React from 'react';
 import PieceSelector from './PieceSelector';
 
-const PiecesSelector = ({ module, pieces, onChange }) => {
+const PiecesSelector = ({ module, pieces }) => {
   return (
     <div className="pieces-selector">
       {pieces.map((item, index) => (
@@ -10,12 +10,10 @@ const PiecesSelector = ({ module, pieces, onChange }) => {
           module={module}
           shapeId={index}
           piece={item}
-          onChange={onChange}
         />
       ))}
     </div>
   );
 };
 
-export default PiecesSelector;
-
+export default React.memo(PiecesSelector);

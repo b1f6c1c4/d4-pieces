@@ -139,7 +139,7 @@
 }
 
 .board > div {
-  margin: 7px;
+  margin: 17px;
 }
 
 .board > div:first-child {
@@ -202,17 +202,19 @@
 
 .button-row {
   display: flex;
-  align-items: center;
+  min-height: 20px;
+  align-items: stretch;
   gap: 0px;
 }
 
-.button-row button {
-  width: 20px;
-  height: 20px;
+.button-row .button {
+  width: max-content;
+  height: max-content;
+  padding: 5px;
   box-sizing: border-box;
   font-size: 12px;
   color: #ffffff;
-  font-weight: black;
+  font-weight: bold;
   text-align: center;
   font-family: Monospace;
   font-size: 16px;
@@ -224,24 +226,68 @@
   border: 1px solid #ff99bb;
 }
 
-.button-row :first-child {
+.button-row button {
+  width: 20px;
+  box-sizing: border-box;
+  font-size: 12px;
+  color: #ffffff;
+  font-weight: bold;
+  text-align: center;
+  font-family: Monospace;
+  font-size: 16px;
+  line-height: 16px;
+  user-select: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+  background-color: #ffccdd;
+  border: 1px solid #ff99bb;
+}
+
+.App > .button-row button {
+  width: max-content;
+}
+
+.App > .button-row {
+  width: 100%;
+  flex-wrap: wrap;
+  margin: 10px;
+  justify-content: center;
+}
+
+.App {
+  padding-top: 1em;
+}
+
+.status-row {
+  margin: 1em 0;
+  display: flex;
+  gap: 1em;
+  justify-content: center;
+}
+
+.button-row .button > :first-child {
+  padding-right: 5px;
+}
+
+.button-row :first-child, .button-row span + button {
   border-radius: 4px 0 0 4px;
+}
+
+.button-row :not(:last-child) {
   border-right: 0;
 }
 
 .button-row :last-child {
   border-radius: 0 4px 4px 0;
-  border-left: 0;
 }
 
-.button-row button:hover {
+.button-row button:hover, .button-row .button:hover:not(:has(button:hover, .button:hover)) {
   background-color: #ff99bb;
 }
 
 .button-row input {
   box-sizing: border-box;
   border: 1px solid #ff99bb;
-  height: 20px;
   flex: 1;
   max-width: 30px;
   text-align: center;
