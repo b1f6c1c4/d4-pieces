@@ -1,4 +1,4 @@
-import React, {useCallback, useReducer, useState} from 'react';
+import React, {useCallback, useReducer} from 'react';
 import PiecePlacement from './PiecePlacement';
 
 const PieceSelector = ({ module, shapeId, piece, onUpdate }) => {
@@ -10,13 +10,13 @@ const PieceSelector = ({ module, shapeId, piece, onUpdate }) => {
       onUpdate([-1, -piece.shape.size]);
       lolUpdate();
     }
-  }, [piece]);
+  }, [piece, onUpdate]);
 
   const handleIncrease = useCallback(() => {
     piece.count++;
     onUpdate([+1, +piece.shape.size]);
     lolUpdate();
-  }, [piece]);
+  }, [piece, onUpdate]);
 
   return (
     <div className={`piece-selector ${piece.count ? '' : 'disabled'}`}>

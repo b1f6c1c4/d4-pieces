@@ -2,7 +2,9 @@
 
 A web-based puzzle solver powered by a high-performance C++23 engine and an intuitive React frontend. This project visualizes the solution process for complex tiling puzzles using efficient backtracking search algorithms optimized with bit manipulation techniques.
 
-![Puzzle Solver Demo](demo.jpg)
+**[Website](https://d4-pieces.netlify.app/)**
+
+[![Puzzle Solver Demo](demo.png)](https://d4-pieces.netlify.app/)
 
 ## Features
 

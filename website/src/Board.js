@@ -17,7 +17,7 @@ const Board = ({ shape, onToggle }) => {
     if (col < 0) return false;
     if (col >= shape.LEN) return false;
     const bitIndex = window.BigInt(row * LEN + col);
-    return (value >> bitIndex) & 1n;
+    return !!((value >> bitIndex) & 1n);
   };
 
   // Render the grid
@@ -61,10 +61,10 @@ const Board = ({ shape, onToggle }) => {
         style.borderTopColor    = active ? 'var(--tile-slit)' : north ? 'var(--dark-wood)' : 'unset';
         style.borderBottomColor = active ? 'var(--tile-slit)' : south ? 'var(--dark-wood)' : 'unset';
         style.borderRadius = [
-          (active != north && active != west && (!active || !nw)) ? '8px' : '0',
-          (active != north && active != east && (!active || !ne)) ? '8px' : '0',
-          (active != south && active != east && (!active || !se)) ? '8px' : '0',
-          (active != south && active != west && (!active || !sw)) ? '8px' : '0',
+          (active !== north && active !== west && (!active || !nw)) ? '8px' : '0',
+          (active !== north && active !== east && (!active || !ne)) ? '8px' : '0',
+          (active !== south && active !== east && (!active || !se)) ? '8px' : '0',
+          (active !== south && active !== west && (!active || !sw)) ? '8px' : '0',
         ].join(' ');
         grid.push(
           <div

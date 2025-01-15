@@ -4,7 +4,6 @@ import Board from './Board';
 
 const Solution = ({ pieces, board, solution }) => {
   const { steps } = solution;
-  const used = [];
   const overlays = [];
   new Array(steps.size()).fill(0).forEach((_, id) => {
     const s = steps.get(id);
