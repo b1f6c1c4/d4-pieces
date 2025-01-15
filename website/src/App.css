@@ -265,11 +265,11 @@
   justify-content: center;
 }
 
-.button-row .button > :first-child {
+.button-row .button > span {
   padding-right: 5px;
 }
 
-.button-row :first-child, .button-row span + button {
+.button-row button:first-child, .button-row span + button {
   border-radius: 4px 0 0 4px;
 }
 

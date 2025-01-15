@@ -8,9 +8,11 @@ const moduleLoader = window.Pieces({ locateFile: () => 'pieces.wasm' });
 
 function App() {
   const [module, setModule] = useState();
+  const [thinking, setThinking] = useState(true);
   const [knowns, setKnowns] = useState();
   const [pieces, setPieces] = useState([]);
-  const [availCount, updateAvailCount] = useReducer((a, b) => b === undefined ? 0 : a + b, 0);
+  const [availCount, updateAvailCount] = useReducer(([p1, t1], b) =>
+    b === undefined ? [0, 0] : [p1 + b[0], t1 + b[1]], [0, 0]);
   const [library, setLibrary] = useState([]);
   const [board, setBoard] = useState(undefined);
   const [solution, setSolution] = useState(undefined);
@@ -19,62 +21,67 @@ function App() {
   useEffect(() => {
     moduleLoader.then((module) => {
       window.Pieces = module;
+      setThinking(false);
       setModule(module);
-      const knowns = [
-        0b1111000010000000,
-        0b1110000000110000,
-        0b011000000100000011000000,
-        0b100000001000000011100000,
-        0b1110000011100000,
-        0b1110000011000000,
-        0b1110000010100000,
-        0b1111000000100000,
-      ].map(v => new module.Shape(v).canonical_form(0b11111111).value);
+      const knowns = {
+        D: [ 0x20f, 0x307, 0x10f, 0x507, 0x30e, 0x10107, 0x10704, 0x707, ],
+        T: [ 0x303, 0x207, 0x306, 0x107, 0xf, 0x307, 0x507, 0x10107, 0x707 ],
+        J: [ 0x20f, 0x307, 0x10f, 0x507, 0x30e, 0x10701, 0x10107, 0x707 ],
+        W: [ 0x306, 0x107, 0xf, 0x20f, 0x307, 0x10f, 0x507, 0x30e, 0x10701, 0x10704 ],
+      };
+      for (const key in knowns)
+        knowns[key] = knowns[key]
+          .map(v => new module.Shape(v).canonical_form(0b11111111).value);
       setKnowns(knowns);
       const pieces = [];
-      let cnt = 0;
+      let cnt = 0, tcnt = 0;
       for (let n = 1; n <= 8; n++) {
         const m = module.shape_count(n);
         for (let i = 0; i < m; i++) {
           const p = new module.Piece(module.shape_at(n, i));
           p.group = p.shape.classify;
-          p.count = knowns.includes(p.shape.value);
+          p.count = knowns.D.includes(p.shape.value);
           pieces.push(p);
           cnt += p.count;
+          tcnt += p.count * p.shape.size;
         }
       }
       updateAvailCount(undefined);
-      updateAvailCount(cnt);
+      updateAvailCount([cnt, tcnt]);
       setPieces(pieces);
       setBoard(new module.Shape(window.BigInt('0b111011111110111111101111111011111110011111100111111')));
     });
   }, []);
 
-  const handleToggle = (func) => () => {
-    const p0 = pieces.find(func);
-    if (!p0) {
-      console.error('Unexpected');
-      return;
+  const handleToggle = (func, exact) => () => {
+    let set;
+    if (!exact) {
+      const p0 = pieces.find(func);
+      if (!p0) {
+        console.error('Unexpected');
+        return;
+      }
+      set = +!p0.count;
     }
-    const set = +!p0.count;
     const next = [];
-    let diff = 0;
+    let diff = 0, tdiff = 0;
     for (let i = 0; i < pieces.length; i++) {
       let p = pieces[i];
-      if (func(pieces[i]) && p.count !== set) {
-        //p = p.clone();
-        //p.group = pieces[i].group;
-        diff += set - p.count;
-        p.count = set;
+      const tgt = exact ? func(pieces[i]) : set;
+      if ((exact || func(pieces[i])) && p.count !== tgt) {
+        diff += tgt - p.count;
+        tdiff += (tgt - p.count) * p.shape.size;
+        p.count = tgt;
       }
       next.push(p);
     }
     setPieces(next);
-    updateAvailCount(diff);
+    updateAvailCount([diff, tdiff]);
   };
 
   const handleSolve = (full) => () => {
     setSolution(undefined);
+    setThinking(true);
     setTimeout(() => {
       const vec = new module.VPiece();
       const lib = [];
@@ -87,6 +94,7 @@ function App() {
       setLibrary(lib);
       setSolution(module.solve(vec, board, full));
       setSolutionId(0);
+      setThinking(false);
     }, 100);
   };
 
@@ -104,9 +112,9 @@ function App() {
         ) : undefined}
       </div>
       <div className="status-row">
-        <span>{availCount} pieces selected!</span>
-        <button onClick={handleSolve(true)}>Solve!</button>
-        <button onClick={handleSolve(false)}>Solve All!</button>
+        <span>{availCount[0]} pieces selected, {availCount[1]} / {board?.size} tiles!</span>
+        <button disabled={thinking || !board || board.size > availCount[1]} onClick={handleSolve(true)}>Solve!</button>
+        <button disabled={thinking || !board || board.size > availCount[1]} onClick={handleSolve(false)}>Solve All!</button>
         {solution && (
           <span>{solution.size()} Solutions found!</span>
         )}
@@ -122,9 +130,13 @@ function App() {
         ) : undefined}
       </div>
       <div className="button-row">
-        <button onClick={handleToggle((p) => knowns.includes(p.shape.value))}>Default</button>
+        <button onClick={handleToggle((p) => knowns.D.includes(p.shape.value), true)}>D</button>
+        <button onClick={handleToggle((p) => knowns.J.includes(p.shape.value), true)}>J</button>
+        <button onClick={handleToggle((p) => knowns.T.includes(p.shape.value), true)}>T</button>
+        <button onClick={handleToggle((p) => knowns.W.includes(p.shape.value), true)}>W</button>
         <div class="button">
-          <span onClick={handleToggle((p) => true)}>All</span>
+          <span onClick={handleToggle((p) => true, true)}>All</span>
+          <span onClick={handleToggle((p) => false, true)}>None</span>
           <button onClick={handleToggle((p) => p.shape.size === 1)}>1</button>
           <button onClick={handleToggle((p) => p.shape.size === 2)}>2</button>
           <button onClick={handleToggle((p) => p.shape.size === 3)}>3</button>

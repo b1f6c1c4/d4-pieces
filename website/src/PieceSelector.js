@@ -7,14 +7,14 @@ const PieceSelector = ({ module, shapeId, piece, onUpdate }) => {
   const handleDecrease = useCallback(() => {
     if (piece.count > 0) {
       piece.count--;
-      onUpdate(-1);
+      onUpdate([-1, -piece.shape.size]);
       lolUpdate();
     }
   }, [piece]);
 
   const handleIncrease = useCallback(() => {
     piece.count++;
-    onUpdate(+1);
+    onUpdate([+1, +piece.shape.size]);
     lolUpdate();
   }, [piece]);
 
@@ -29,7 +29,7 @@ const PieceSelector = ({ module, shapeId, piece, onUpdate }) => {
             const x = Number(e.target.value);
             const diff = x - piece.count;
             piece.count = x;
-            onUpdate(diff);
+            onUpdate([diff, diff * piece.shape.size]);
             lolUpdate();
           }}
         />
