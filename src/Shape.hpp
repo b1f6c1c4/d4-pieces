@@ -20,7 +20,7 @@ public:
     // [4] ...
     // [8] ...
     // [12] ...    [MSB]
-    using shape_t = std::conditional_t<LEN * LEN <= 64, uint64_t, __int128>;
+    using shape_t = std::conditional_t<LEN * LEN <= 64, uint64_t, __uint128_t>;
 
 private:
     static constexpr size_t BITS = sizeof(shape_t) * 8;
@@ -45,7 +45,17 @@ public:
     explicit constexpr Shape(shape_t v)
         : value{ shape_t(v & FULL) } { }
 
-    SymmetryGroup classify() const;
+    template <size_t M>
+    explicit constexpr Shape(Shape<M> other) : value{} {
+        auto sh = Shape{};
+        for (auto [y, x] : other)
+            sh = sh.set(y, x);
+        *this = sh;
+    }
+
+    SymmetryGroup classify() const {
+        return static_cast<SymmetryGroup>(symmetry());
+    }
 
     constexpr Shape(const Shape &v) = default;
     constexpr Shape(Shape &&v) noexcept = default;
@@ -69,7 +79,12 @@ public:
     [[nodiscard]] constexpr shape_t get_value() const { return value; }
 
     [[nodiscard]] constexpr size_t size() const {
-        return std::popcount(value);
+        if constexpr (std::is_same_v<shape_t, __uint128_t>) {
+            return std::popcount(static_cast<uint64_t>(value))
+                + std::popcount(static_cast<uint64_t>(value >> 64u));
+        } else {
+            return std::popcount(value);
+        }
     }
 
     [[nodiscard]] constexpr size_t left() const {
@@ -231,6 +246,16 @@ extern template Shape<8> Shape<8>::transform<true,  true,  false>(bool norm) con
 extern template Shape<8> Shape<8>::transform<true,  false, true >(bool norm) const;
 extern template Shape<8> Shape<8>::transform<true,  true,  true >(bool norm) const;
 
+extern template std::array<Shape<8>, 8> Shape<8>::transforms(bool norm) const;
+extern template Shape<8> Shape<8>::translate(int x, int y) const;
+extern template Shape<8> Shape<8>::translate_unsafe(int x, int y) const;
+extern template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
+extern template unsigned Shape<8>::symmetry() const;
+extern template bool Shape<8>::connected() const;
+#ifdef FMT_VERSION
+extern template auto fmt::formatter<Shape<8>>::format(Shape<8> c, format_context &ctx) const -> format_context::iterator;
+#endif
+
 extern template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
 extern template Shape<11> Shape<11>::transform<false, true,  false>(bool norm) const;
 extern template Shape<11> Shape<11>::transform<false, false, true >(bool norm) const;
@@ -239,3 +264,13 @@ extern template Shape<11> Shape<11>::transform<true,  false, false>(bool norm) c
 extern template Shape<11> Shape<11>::transform<true,  true,  false>(bool norm) const;
 extern template Shape<11> Shape<11>::transform<true,  false, true >(bool norm) const;
 extern template Shape<11> Shape<11>::transform<true,  true,  true >(bool norm) const;
+
+extern template std::array<Shape<11>, 8> Shape<11>::transforms(bool norm) const;
+extern template Shape<11> Shape<11>::translate(int x, int y) const;
+extern template Shape<11> Shape<11>::translate_unsafe(int x, int y) const;
+extern template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
+extern template unsigned Shape<11>::symmetry() const;
+extern template bool Shape<11>::connected() const;
+#ifdef FMT_VERSION
+extern template auto fmt::formatter<Shape<11>>::format(Shape<11> c, format_context &ctx) const -> format_context::iterator;
+#endif

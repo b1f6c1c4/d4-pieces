@@ -30,7 +30,7 @@ Solution<L>::Solution(std::vector<Step<L>> st) : steps{ std::move(st) } {
 }
 
 template <size_t L>
-Step<L> make_step(size_t id, size_t trs, coords_t tra, Shape<L> placed) {
+static Step<L> make_step(size_t id, size_t trs, coords_t tra, Shape<L> placed) {
     int a{}, b{}, c{}, d{};
     switch (trs) {
         case 0: a = +1, d = +1; break;
@@ -46,7 +46,7 @@ Step<L> make_step(size_t id, size_t trs, coords_t tra, Shape<L> placed) {
 }
 
 template <size_t L>
-size_t min_tiles(const std::vector<Piece<L>> &lib, const std::vector<size_t> &used) {
+static size_t min_tiles(const std::vector<Piece<L>> &lib, const std::vector<size_t> &used) {
     auto m = std::numeric_limits<size_t>::max();
     for (auto &&[p, u] : std::views::zip(lib, used))
         if (u < p.count)
@@ -124,3 +124,13 @@ size_t solve_count(const std::vector<Piece<L>> &lib, Shape<L> board) {
     }(board);
     return count;
 }
+
+template Piece<8>::Piece(Shape<8> s);
+template Solution<8>::Solution(std::vector<Step<8>> st);
+template std::vector<Solution<8>> solve(const std::vector<Piece<8>> &lib, Shape<8> board, bool single);
+template size_t solve_count(const std::vector<Piece<8>> &lib, Shape<8> board);
+
+template Piece<11>::Piece(Shape<11> s);
+template Solution<11>::Solution(std::vector<Step<11>> st);
+template std::vector<Solution<11>> solve(const std::vector<Piece<11>> &lib, Shape<11> board, bool single);
+template size_t solve_count(const std::vector<Piece<11>> &lib, Shape<11> board);

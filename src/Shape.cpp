@@ -24,24 +24,6 @@ Shape<L> Shape<L>::transform(bool norm) const {
     return sh;
 }
 
-template Shape<8> Shape<8>::transform<false, false, false>(bool norm) const;
-template Shape<8> Shape<8>::transform<false, true,  false>(bool norm) const;
-template Shape<8> Shape<8>::transform<false, false, true >(bool norm) const;
-template Shape<8> Shape<8>::transform<false, true,  true >(bool norm) const;
-template Shape<8> Shape<8>::transform<true,  false, false>(bool norm) const;
-template Shape<8> Shape<8>::transform<true,  true,  false>(bool norm) const;
-template Shape<8> Shape<8>::transform<true,  false, true >(bool norm) const;
-template Shape<8> Shape<8>::transform<true,  true,  true >(bool norm) const;
-
-template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
-template Shape<11> Shape<11>::transform<false, true,  false>(bool norm) const;
-template Shape<11> Shape<11>::transform<false, false, true >(bool norm) const;
-template Shape<11> Shape<11>::transform<false, true,  true >(bool norm) const;
-template Shape<11> Shape<11>::transform<true,  false, false>(bool norm) const;
-template Shape<11> Shape<11>::transform<true,  true,  false>(bool norm) const;
-template Shape<11> Shape<11>::transform<true,  false, true >(bool norm) const;
-template Shape<11> Shape<11>::transform<true,  true,  true >(bool norm) const;
-
 template <size_t L>
 std::array<Shape<L>, 8> Shape<L>::transforms(bool norm) const {
     return {
@@ -114,11 +96,6 @@ bool Shape<L>::connected() const {
     }
 }
 
-template <size_t L>
-SymmetryGroup Shape<L>::classify() const {
-    return static_cast<SymmetryGroup>(symmetry());
-}
-
 #ifdef FMT_VERSION
 template <size_t L>
 auto fmt::formatter<Shape<L>>::format(Shape<L> c, format_context &ctx) const
@@ -134,4 +111,42 @@ auto fmt::formatter<Shape<L>>::format(Shape<L> c, format_context &ctx) const
     }
     return formatter<string_view>::format(txt, ctx);
 }
+#endif
+
+template Shape<8> Shape<8>::transform<false, false, false>(bool norm) const;
+template Shape<8> Shape<8>::transform<false, true,  false>(bool norm) const;
+template Shape<8> Shape<8>::transform<false, false, true >(bool norm) const;
+template Shape<8> Shape<8>::transform<false, true,  true >(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  false, false>(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  true,  false>(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  false, true >(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  true,  true >(bool norm) const;
+
+template std::array<Shape<8>, 8> Shape<8>::transforms(bool norm) const;
+template Shape<8> Shape<8>::translate(int x, int y) const;
+template Shape<8> Shape<8>::translate_unsafe(int x, int y) const;
+template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
+template unsigned Shape<8>::symmetry() const;
+template bool Shape<8>::connected() const;
+#ifdef FMT_VERSION
+template auto fmt::formatter<Shape<8>>::format(Shape<8> c, format_context &ctx) const -> format_context::iterator;
+#endif
+
+template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
+template Shape<11> Shape<11>::transform<false, true,  false>(bool norm) const;
+template Shape<11> Shape<11>::transform<false, false, true >(bool norm) const;
+template Shape<11> Shape<11>::transform<false, true,  true >(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  false, false>(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  true,  false>(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  false, true >(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  true,  true >(bool norm) const;
+
+template std::array<Shape<11>, 8> Shape<11>::transforms(bool norm) const;
+template Shape<11> Shape<11>::translate(int x, int y) const;
+template Shape<11> Shape<11>::translate_unsafe(int x, int y) const;
+template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
+template unsigned Shape<11>::symmetry() const;
+template bool Shape<11>::connected() const;
+#ifdef FMT_VERSION
+template auto fmt::formatter<Shape<11>>::format(Shape<11> c, format_context &ctx) const -> format_context::iterator;
 #endif

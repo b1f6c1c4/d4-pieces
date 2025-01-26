@@ -8,12 +8,14 @@
 #include <thread>
 #include <ranges>
 
+#define L 8
+
 struct bin_t {
     std::mutex mtx;
-    std::unordered_set<Shape> set;
+    std::unordered_set<Shape<L>> set;
 };
 
-static std::array<bin_t, Shape::LEN + 1> bins;
+static std::array<bin_t, L + 1> bins;
 static std::atomic_size_t found;
 static uint64_t report;
 
@@ -25,15 +27,15 @@ void worker(uint64_t range, uint64_t mul) {
             std::print(std::cerr, "{}/{} = {:02f}% {} found, n={}\n",
                     i, range, static_cast<double>(i) / range,
                     found.load(std::memory_order_relaxed), n);
-        if (n > Shape::LEN)
+        if (n > Shape<L>::LEN)
             continue;
-        if (!Shape{ v }.connected())
+        if (!Shape<L>{ v }.connected())
             continue;
 
         found.fetch_add(1, std::memory_order_relaxed);
         auto &bin = bins[n];
         std::lock_guard lock{ bin.mtx };
-        bin.set.insert(Shape{ v }.canonical_form());
+        bin.set.insert(Shape<L>{ v }.canonical_form());
     }
 }
 
