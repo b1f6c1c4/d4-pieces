@@ -96,22 +96,19 @@ bool Shape<L>::connected() const {
     }
 }
 
-#ifdef FMT_VERSION
 template <size_t L>
-auto fmt::formatter<Shape<L>>::format(Shape<L> c, format_context &ctx) const
-    -> format_context::iterator {
+std::string Shape<L>::to_string() const {
     std::string txt;
     for (auto row = 0u; row < Shape<L>::LEN; row++) {
         for (auto col = 0u; col < Shape<L>::LEN; col++)
-            if (c.test(row, col))
+            if (test(row, col))
                 txt.push_back('@');
             else
                 txt.push_back(' ');
         txt.push_back('\n');
     }
-    return formatter<string_view>::format(txt, ctx);
+    return txt;
 }
-#endif
 
 template Shape<8> Shape<8>::transform<false, false, false>(bool norm) const;
 template Shape<8> Shape<8>::transform<false, true,  false>(bool norm) const;
@@ -128,9 +125,7 @@ template Shape<8> Shape<8>::translate_unsafe(int x, int y) const;
 template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
 template unsigned Shape<8>::symmetry() const;
 template bool Shape<8>::connected() const;
-#ifdef FMT_VERSION
-template auto fmt::formatter<Shape<8>>::format(Shape<8> c, format_context &ctx) const -> format_context::iterator;
-#endif
+template std::string Shape<8>::to_string() const;
 
 template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
 template Shape<11> Shape<11>::transform<false, true,  false>(bool norm) const;
@@ -147,6 +142,4 @@ template Shape<11> Shape<11>::translate_unsafe(int x, int y) const;
 template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
 template unsigned Shape<11>::symmetry() const;
 template bool Shape<11>::connected() const;
-#ifdef FMT_VERSION
-template auto fmt::formatter<Shape<11>>::format(Shape<11> c, format_context &ctx) const -> format_context::iterator;
-#endif
+template std::string Shape<11>::to_string() const;

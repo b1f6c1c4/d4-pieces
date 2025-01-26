@@ -1,9 +1,10 @@
 #pragma once
 
-#include <functional>
+#include <array>
 #include <bit>
 #include <compare>
-#include <array>
+#include <functional>
+#include <string_view>
 #include <vector>
 
 #include "Group.hpp"
@@ -44,6 +45,37 @@ private:
 public:
     explicit constexpr Shape(shape_t v)
         : value{ shape_t(v & FULL) } { }
+
+    explicit constexpr Shape(std::string_view sv) : value{} {
+        if (sv.empty()) return;
+        if (sv.front() == '\n')
+            sv = sv.substr(1);
+        auto row_mask = shape_t{ 1u };
+        auto mask = row_mask;
+        for (auto ch : sv) {
+            switch (ch) {
+                case ' ':
+                case '0':
+                case '.':
+                case '-':
+                case '_':
+                    mask <<= 1u;
+                    break;
+                case '*':
+                case '1':
+                case '@':
+                case '#':
+                case 'X':
+                case '%':
+                    value |= mask;
+                    mask <<= 1u;
+                    break;
+                case '\n':
+                    mask = row_mask <<= LEN;
+                    break;
+            }
+        }
+    }
 
     template <size_t M>
     explicit constexpr Shape(const Shape<M> &other) : value{} {
@@ -157,13 +189,22 @@ public:
     [[nodiscard]] bool test(size_t row, size_t col) const {
         return (value >> (row * LEN + col)) & 1u;
     }
+    [[nodiscard]] Shape test(coords_t pos) const {
+        return test(pos.first, pos.second);
+    }
 
     [[nodiscard]] Shape set(size_t row, size_t col) const {
-        return Shape{ value | 1ull << (row * LEN + col) };
+        return Shape{ value | shape_t{ 1u } << (row * LEN + col) };
+    }
+    [[nodiscard]] Shape set(coords_t pos) const {
+        return set(pos.first, pos.second);
     }
 
     [[nodiscard]] Shape clear(size_t row, size_t col) const {
-        return Shape{ value & ~(1ull << (row * LEN + col)) };
+        return Shape{ value & ~(shape_t{ 1u } << (row * LEN + col)) };
+    }
+    [[nodiscard]] Shape clear(coords_t pos) const {
+        return clear(pos.first, pos.second);
     }
 
     // C1 C2 C4 D1 D2 D4
@@ -224,13 +265,24 @@ public:
     [[nodiscard]] unsigned symmetry() const;
 
     [[nodiscard]] bool connected() const;
+
+    [[nodiscard]] std::string to_string() const;
 };
+
+constexpr inline Shape<8> operator ""_s8(const char *str, size_t len) {
+    return Shape<8>(std::string_view{ str, len });
+}
+constexpr inline Shape<11> operator ""_s11(const char *str, size_t len) {
+    return Shape<11>(std::string_view{ str, len });
+}
 
 #ifdef FMT_VERSION
 template <size_t L>
 struct fmt::formatter<Shape<L>> : formatter<string_view> {
     auto format(Shape<L> c, format_context &ctx) const
-        -> format_context::iterator;
+        -> format_context::iterator {
+        return formatter<string_view>::format(c.to_string(), ctx);
+    }
 };
 #endif
 
@@ -256,9 +308,7 @@ extern template Shape<8> Shape<8>::translate_unsafe(int x, int y) const;
 extern template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
 extern template unsigned Shape<8>::symmetry() const;
 extern template bool Shape<8>::connected() const;
-#ifdef FMT_VERSION
-extern template auto fmt::formatter<Shape<8>>::format(Shape<8> c, format_context &ctx) const -> format_context::iterator;
-#endif
+extern template std::string Shape<8>::to_string() const;
 
 extern template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
 extern template Shape<11> Shape<11>::transform<false, true,  false>(bool norm) const;
@@ -275,6 +325,4 @@ extern template Shape<11> Shape<11>::translate_unsafe(int x, int y) const;
 extern template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
 extern template unsigned Shape<11>::symmetry() const;
 extern template bool Shape<11>::connected() const;
-#ifdef FMT_VERSION
-extern template auto fmt::formatter<Shape<11>>::format(Shape<11> c, format_context &ctx) const -> format_context::iterator;
-#endif
+extern template std::string Shape<11>::to_string() const;
