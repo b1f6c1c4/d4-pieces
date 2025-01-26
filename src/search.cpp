@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <cerrno>
 #include <fcntl.h>
+#include <limits>
 #include <ranges>
 #include <print>
 #include <list>
@@ -63,9 +64,16 @@ constexpr inline board_t<11> operator ""_b11(const char *str, size_t len) {
 }
 
 template <size_t L>
-stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board) {
+stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board, bool abort_on_zero) {
     using namespace std::placeholders;
     auto func = std::bind(solve_count<L>, lib, _1);
+    if (abort_on_zero) {
+        auto b = board.base;
+        for (auto r : board.regions)
+            b = b.clear(r.front());
+        if (!func(b))
+            return { 1 };
+    }
     boost::basic_thread_pool pool;
     std::vector<boost::future<size_t>> futures;
     [&](this auto &&self, auto it, Shape<L> curr) {
@@ -77,17 +85,21 @@ stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board) {
             self(it, curr.clear(pos));
     }(board.regions.begin(), board.base);
     stat_t stat{};
+    stat.min = std::numeric_limits<size_t>::max();
     auto total = 0zu;
-    auto [min, max] = std::ranges::minmax(futures | std::views::transform([&](auto &f) {
+    for (auto &f : futures) {
         f.wait();
         auto v = f.get();
+        if (!v && abort_on_zero) {
+            pool.interrupt_and_join();
+            return { 1 };
+        }
         if (v == 0) stat.zeros++;
         if (v == 1) stat.singles++;
+        stat.min = std::min(stat.min, v);
+        stat.max = std::max(stat.max, v);
         total += v;
-        return v;
-    }));
-    stat.min = min;
-    stat.max = max;
+    }
     stat.avg = static_cast<double>(total) / board.count;
     return stat;
 }
@@ -107,10 +119,14 @@ int enumerate_library(size_t area, char *argv[]) {
         std::print("writing to fd:3 ({})\n",
             std::filesystem::read_symlink("/proc/self/fd/3").c_str());
     }
+    auto reporting_threshold = 10zu;
     [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left) {
         if (!left) {
             if (pieces >= min_pieces) {
-                possible_shapes++;
+                if (++possible_shapes % reporting_threshold == 0) {
+                    std::print("possible shapes = {} ...\n", possible_shapes);
+                    reporting_threshold *= 10;
+                }
                 if (valid) {
                     auto sz = shapes.size();
                     ::write(3, &sz, sizeof(sz));
@@ -136,17 +152,48 @@ int enumerate_library(size_t area, char *argv[]) {
 
 #define L 8
 
+int evaluate_libraries(const board_t<L> &board, char *argv[]) {
+    (void)argv;
+    while (true) {
+        size_t sz;
+        if (::read(3, &sz, sizeof(sz)) != sizeof(sz))
+            break;
+        std::vector<Piece<L>> pieces;
+        pieces.reserve(sz);
+        for (auto i = 0zu; i < sz; i++) {
+            Shape<8> sh{ 0u };
+            ::read(3, &sh, sizeof(sh));
+            pieces.emplace_back(sh.to<L>());
+        }
+        auto stat = evaluate(pieces, board, true);
+        if (!stat.zeros)
+            std::print("zeros={} singles={} min={} max={} avg={}\n",
+                    stat.zeros, stat.singles, stat.min, stat.max, stat.avg);
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     auto board = construct_board<L>(R"(
-mmmmmmXX
-mmmmmmXX
-ddddddXX
-ddddddXX
-ddddddXX
-ddddddXX
+mmmmmm
+mmmmmm
 ddddddd
-wwwwwww
+ddddddd
+ddddddd
+ddddddd
+ddd
 )");
+
+    //auto board = construct_board<L>(R"(
+//mmmmmmXX
+//mmmmmmXX
+//ddddddXX
+//ddddddXX
+//ddddddXX
+//ddddddXX
+//ddddddd
+//wwwwwww
+//)");
 
     std::print("working on a board of size={} left={} count={}\n",
             board.base.size(), board.base.size() - board.regions.size(), board.count);
@@ -156,7 +203,6 @@ wwwwwww
     if (argv[1] == "enumerate"sv)
         return enumerate_library(board.base.size() - board.regions.size(), ++argv);
 
-    // auto stat = evaluate(pieces, board);
-    // std::print("zeros={} singles={} min={} max={} avg={}\n",
-    //         stat.zeros, stat.singles, stat.min, stat.max, stat.avg);
+    if (argv[1] == "evaluate"sv)
+        return evaluate_libraries(board, ++argv);
 }

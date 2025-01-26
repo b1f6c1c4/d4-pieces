@@ -5,6 +5,10 @@
 #include <ranges>
 #include <stdexcept>
 
+#if EMSCRIPTEN
+#include <boost/thread/thread.hpp>
+#endif
+
 template <size_t L>
 Piece<L>::Piece(Shape<L> s) : count{ 1 }, canonical{ s } {
     for (auto sh : canonical.transforms(true)) {
@@ -100,6 +104,9 @@ size_t solve_count(const std::vector<Piece<L>> &lib, Shape<L> board) {
     for (auto &p : lib)
         max_tiles += p.canonical.size() * p.count;
     [&](this auto &&self, Shape<L> open_tiles) {
+#if EMSCRIPTEN
+        boost::this_thread::interruption_point();
+#endif
         if (open_tiles.size() > max_tiles)
             return;
         if (!open_tiles) {
