@@ -1,80 +1,34 @@
 #pragma once
 
-#include <cstdint>
 #include <functional>
 #include <bit>
 #include <compare>
-#include <type_traits>
 #include <array>
 #include <vector>
 
+#include "Group.hpp"
+
 using coords_t = std::pair<int, int>; // Y, X
 
-enum class SymmetryGroup : uint16_t {
-  C1    = 0b00000001u,
-  C2    = 0b00001001u,
-  C4    = 0b01101001u,
-  D1_X  = 0b00000011u,
-  D1_Y  = 0b00000101u,
-  D1_P  = 0b00010001u,
-  D1_S  = 0b10000001u,
-  D2_XY = 0b00001111u,
-  D2_PS = 0b10011001u,
-  D4    = 0b11111111u,
-};
-
-constexpr inline bool operator>=(SymmetryGroup lhs, SymmetryGroup rhs) {
-    auto l = static_cast<std::underlying_type<SymmetryGroup>::type>(lhs);
-    auto r = static_cast<std::underlying_type<SymmetryGroup>::type>(rhs);
-    return (l & r) == r;
-}
-
-constexpr inline SymmetryGroup operator*(SymmetryGroup lhs, SymmetryGroup rhs) {
-    if (lhs >= rhs) return lhs;
-    if (rhs >= lhs) return rhs;
-    auto l = static_cast<std::underlying_type<SymmetryGroup>::type>(lhs);
-    auto r = static_cast<std::underlying_type<SymmetryGroup>::type>(rhs);
-    auto lor = l | r;
-    auto test = [&](unsigned v, unsigned x) { if ((lor & v) == v) lor |= x; };
-    test(0b00000111u, 0b00001000u); // flip XY == rot180
-    test(0b10010001u, 0b00001000u); // flip PS == rot180
-    test(0b00001011u, 0b00000100u); // rot180 + flip X == flip Y
-    test(0b00001101u, 0b00000010u); // rot180 + flip Y == flip X
-    test(0b00011001u, 0b10000000u); // rot180 + flip P == flip S
-    test(0b10001001u, 0b00010000u); // rot180 + flip S == flip P
-    test(0b00100011u, 0b11111110u); // rot90 + flip X == D4
-    test(0b01000011u, 0b11111110u); // rot90 + flip X == D4
-    test(0b00100101u, 0b11111110u); // rot90 + flip X == D4
-    test(0b01000101u, 0b11111110u); // rot90 + flip X == D4
-    test(0b00010011u, 0b11111110u); // flip XP == D4
-    test(0b10000011u, 0b11111110u); // flip XS == D4
-    test(0b00010101u, 0b11111110u); // flip YP == D4
-    test(0b10000101u, 0b11111110u); // flip YS == D4
-    return static_cast<SymmetryGroup>(lor);
-}
-
-constexpr inline size_t order(SymmetryGroup v) {
-    auto s = static_cast<std::underlying_type<SymmetryGroup>::type>(v);
-    return 8 / std::popcount(s);
-}
-
+template <size_t L>
 class Shape {
 public:
-    static constexpr size_t LEN = 8;
+    static constexpr size_t LEN = L;
     [[nodiscard]] auto get_LEN() const { return LEN; }
 
     // [LSB] [1] [2] [3]
     // [4] ...
     // [8] ...
     // [12] ...    [MSB]
-    using shape_t = uint64_t;
+    using shape_t = std::conditional_t<LEN * LEN <= 64, uint64_t, __int128>;
 
 private:
     static constexpr size_t BITS = sizeof(shape_t) * 8;
 
-    static constexpr shape_t FULL = static_cast<shape_t>(
-            LEN * LEN == BITS ? ~0ull : (1ull << (LEN * LEN % BITS)) - 1ull);
-    static constexpr shape_t FIRST_ROW = static_cast<shape_t>((1ull << LEN) - 1ull);
+    static constexpr shape_t FULL = LEN * LEN == BITS
+        ? ~shape_t{ 0u }
+        : (shape_t{ 1u } << (LEN * LEN % BITS)) - 1u;
+    static constexpr shape_t FIRST_ROW = (shape_t{ 1 } << LEN) - 1u;
     static constexpr shape_t FIRST_COL = [] constexpr {
         shape_t total{};
         shape_t mask{ 1 };
@@ -254,30 +208,34 @@ public:
 };
 
 #ifdef FMT_VERSION
-template <>
-struct fmt::formatter<SymmetryGroup> : formatter<string_view> {
-    auto format(SymmetryGroup c, format_context &ctx) const
-        -> format_context::iterator;
-};
-template <>
-struct fmt::formatter<Shape> : formatter<string_view> {
-    auto format(Shape c, format_context &ctx) const
+template <size_t L>
+struct fmt::formatter<Shape<L>> : formatter<string_view> {
+    auto format(Shape<L> c, format_context &ctx) const
         -> format_context::iterator;
 };
 #endif
 
-template <>
-struct std::hash<Shape> {
-    constexpr size_t operator()(Shape s) const noexcept {
+template <size_t L>
+struct std::hash<Shape<L>> {
+    constexpr size_t operator()(Shape<L> s) const noexcept {
         return s.value;
     }
 };
 
-extern template Shape Shape::transform<false, false, false>(bool norm) const;
-extern template Shape Shape::transform<false, true,  false>(bool norm) const;
-extern template Shape Shape::transform<false, false, true >(bool norm) const;
-extern template Shape Shape::transform<false, true,  true >(bool norm) const;
-extern template Shape Shape::transform<true,  false, false>(bool norm) const;
-extern template Shape Shape::transform<true,  true,  false>(bool norm) const;
-extern template Shape Shape::transform<true,  false, true >(bool norm) const;
-extern template Shape Shape::transform<true,  true,  true >(bool norm) const;
+extern template Shape<8> Shape<8>::transform<false, false, false>(bool norm) const;
+extern template Shape<8> Shape<8>::transform<false, true,  false>(bool norm) const;
+extern template Shape<8> Shape<8>::transform<false, false, true >(bool norm) const;
+extern template Shape<8> Shape<8>::transform<false, true,  true >(bool norm) const;
+extern template Shape<8> Shape<8>::transform<true,  false, false>(bool norm) const;
+extern template Shape<8> Shape<8>::transform<true,  true,  false>(bool norm) const;
+extern template Shape<8> Shape<8>::transform<true,  false, true >(bool norm) const;
+extern template Shape<8> Shape<8>::transform<true,  true,  true >(bool norm) const;
+
+extern template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
+extern template Shape<11> Shape<11>::transform<false, true,  false>(bool norm) const;
+extern template Shape<11> Shape<11>::transform<false, false, true >(bool norm) const;
+extern template Shape<11> Shape<11>::transform<false, true,  true >(bool norm) const;
+extern template Shape<11> Shape<11>::transform<true,  false, false>(bool norm) const;
+extern template Shape<11> Shape<11>::transform<true,  true,  false>(bool norm) const;
+extern template Shape<11> Shape<11>::transform<true,  false, true >(bool norm) const;
+extern template Shape<11> Shape<11>::transform<true,  true,  true >(bool norm) const;

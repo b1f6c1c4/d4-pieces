@@ -5,18 +5,20 @@
 #include <ranges>
 #include <stdexcept>
 
-Piece::Piece(Shape s) : count{ 1 }, canonical{ s } {
+template <size_t L>
+Piece<L>::Piece(Shape<L> s) : count{ 1 }, canonical{ s } {
     for (auto sh : canonical.transforms(true)) {
         auto duplicate = std::ranges::find(placements, sh, &Placement::normal) != placements.end();
         placements.emplace_back(sh, std::make_pair(sh.bottom(), sh.right()), !duplicate, duplicate);
     }
 }
 
-Solution::Solution(std::vector<Step> st) : steps{ std::move(st) } {
-    for (auto row = 0u; row < Shape::LEN; row++) {
+template <size_t L>
+Solution<L>::Solution(std::vector<Step<L>> st) : steps{ std::move(st) } {
+    for (auto row = 0u; row < Shape<L>::LEN; row++) {
         map.emplace_back();
-        for (auto col = 0u; col < Shape::LEN; col++) {
-            auto it = std::ranges::find_if(steps, [=](Step st){
+        for (auto col = 0u; col < Shape<L>::LEN; col++) {
+            auto it = std::ranges::find_if(steps, [=](Step<L> st){
                     return st.shape.test(row, col);
             });
             if (it == steps.end())
@@ -27,7 +29,8 @@ Solution::Solution(std::vector<Step> st) : steps{ std::move(st) } {
     }
 }
 
-Step make_step(size_t id, size_t trs, coords_t tra, Shape placed) {
+template <size_t L>
+Step<L> make_step(size_t id, size_t trs, coords_t tra, Shape<L> placed) {
     int a{}, b{}, c{}, d{};
     switch (trs) {
         case 0: a = +1, d = +1; break;
@@ -39,10 +42,11 @@ Step make_step(size_t id, size_t trs, coords_t tra, Shape placed) {
         case 6: b = +1, c = -1; break;
         case 7: b = -1, c = -1; break;
     }
-    return Step{ id, trs, a, b, c, d, tra.second, tra.first, placed };
+    return Step<L>{ id, trs, a, b, c, d, tra.second, tra.first, placed };
 }
 
-size_t min_tiles(const std::vector<Piece> &lib, const std::vector<size_t> &used) {
+template <size_t L>
+size_t min_tiles(const std::vector<Piece<L>> &lib, const std::vector<size_t> &used) {
     auto m = std::numeric_limits<size_t>::max();
     for (auto &&[p, u] : std::views::zip(lib, used))
         if (u < p.count)
@@ -50,14 +54,15 @@ size_t min_tiles(const std::vector<Piece> &lib, const std::vector<size_t> &used)
     return m;
 }
 
-std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board, bool single) {
-    std::vector<Solution> solutions;
+template <size_t L>
+std::vector<Solution<L>> solve(const std::vector<Piece<L>> &lib, Shape<L> board, bool single) {
+    std::vector<Solution<L>> solutions;
     std::vector<size_t> used(lib.size(), 0);
-    std::vector<Step> history;
+    std::vector<Step<L>> history;
     auto max_tiles = 0zu;
     for (auto &p : lib)
         max_tiles += p.canonical.size() * p.count;
-    [&](this auto &&self, Shape open_tiles) {
+    [&](this auto &&self, Shape<L> open_tiles) {
         if (open_tiles.size() > max_tiles)
             return false;
         if (!open_tiles) {
@@ -71,7 +76,7 @@ std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board, bool sin
             if (u == p.count) continue;
             u++;
             max_tiles -= p.canonical.size();
-            if (p.cover(pos, [&](Shape placed, size_t trs, coords_t tra) {
+            if (p.cover(pos, [&](Shape<L> placed, size_t trs, coords_t tra) {
                 if (!(open_tiles >= placed)) return false;
                 history.push_back(make_step(id, trs, tra, placed));
                 auto f = self(open_tiles - placed);
@@ -87,13 +92,14 @@ std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board, bool sin
     return solutions;
 }
 
-size_t solve_count(const std::vector<Piece> &lib, Shape board) {
+template <size_t L>
+size_t solve_count(const std::vector<Piece<L>> &lib, Shape<L> board) {
     auto count = 0zu;
     std::vector<size_t> used(lib.size(), 0);
     auto max_tiles = 0zu;
     for (auto &p : lib)
         max_tiles += p.canonical.size() * p.count;
-    [&](this auto &&self, Shape open_tiles) {
+    [&](this auto &&self, Shape<L> open_tiles) {
         if (open_tiles.size() > max_tiles)
             return;
         if (!open_tiles) {
@@ -107,7 +113,7 @@ size_t solve_count(const std::vector<Piece> &lib, Shape board) {
             if (u == p.count) continue;
             u++;
             max_tiles -= p.canonical.size();
-            p.cover(pos, [&](Shape placed, size_t trs, coords_t tra) {
+            p.cover(pos, [&](Shape<L> placed, size_t trs, coords_t tra) {
                 if (!(open_tiles >= placed)) return false;
                 self(open_tiles - placed);
                 return false;

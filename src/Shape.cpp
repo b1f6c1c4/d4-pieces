@@ -2,8 +2,9 @@
 #include <string>
 #include <ranges>
 
+template <size_t L>
 template <bool Swap, bool FlipX, bool FlipY>
-Shape Shape::transform(bool norm) const {
+Shape<L> Shape<L>::transform(bool norm) const {
     if (!value) return Shape{ 0u };
     shape_t out{};
     // iterate from out's MSB to LSB
@@ -23,16 +24,26 @@ Shape Shape::transform(bool norm) const {
     return sh;
 }
 
-template Shape Shape::transform<false, false, false>(bool norm) const;
-template Shape Shape::transform<false, true,  false>(bool norm) const;
-template Shape Shape::transform<false, false, true >(bool norm) const;
-template Shape Shape::transform<false, true,  true >(bool norm) const;
-template Shape Shape::transform<true,  false, false>(bool norm) const;
-template Shape Shape::transform<true,  true,  false>(bool norm) const;
-template Shape Shape::transform<true,  false, true >(bool norm) const;
-template Shape Shape::transform<true,  true,  true >(bool norm) const;
+template Shape<8> Shape<8>::transform<false, false, false>(bool norm) const;
+template Shape<8> Shape<8>::transform<false, true,  false>(bool norm) const;
+template Shape<8> Shape<8>::transform<false, false, true >(bool norm) const;
+template Shape<8> Shape<8>::transform<false, true,  true >(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  false, false>(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  true,  false>(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  false, true >(bool norm) const;
+template Shape<8> Shape<8>::transform<true,  true,  true >(bool norm) const;
 
-std::array<Shape, 8> Shape::transforms(bool norm) const {
+template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
+template Shape<11> Shape<11>::transform<false, true,  false>(bool norm) const;
+template Shape<11> Shape<11>::transform<false, false, true >(bool norm) const;
+template Shape<11> Shape<11>::transform<false, true,  true >(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  false, false>(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  true,  false>(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  false, true >(bool norm) const;
+template Shape<11> Shape<11>::transform<true,  true,  true >(bool norm) const;
+
+template <size_t L>
+std::array<Shape<L>, 8> Shape<L>::transforms(bool norm) const {
     return {
         transform<false, false, false>(norm),
         transform<false, true,  false>(norm),
@@ -45,7 +56,8 @@ std::array<Shape, 8> Shape::transforms(bool norm) const {
     };
 }
 
-Shape Shape::translate(int x, int y) const {
+template <size_t L>
+Shape<L> Shape<L>::translate(int x, int y) const {
     auto v = value;
     while (y > 0) v <<= LEN, y--;
     while (y < 0) v >>= LEN, y++;
@@ -54,21 +66,24 @@ Shape Shape::translate(int x, int y) const {
     return Shape{ v };
 }
 
-Shape Shape::translate_unsafe(int x, int y) const {
+template <size_t L>
+Shape<L> Shape<L>::translate_unsafe(int x, int y) const {
     return Shape{ value << LEN * y + x };
 }
 
-Shape Shape::canonical_form(unsigned forms) const {
+template <size_t L>
+Shape<L> Shape<L>::canonical_form(unsigned forms) const {
     auto v = normalize().value;
     for (auto sh : transforms(true)) {
         if (forms & 1u)
             v = std::min(v, sh.value);
         forms >>= 1u;
     }
-    return Shape{ v };
+    return Shape<L>{ v };
 }
 
-unsigned Shape::symmetry() const {
+template <size_t L>
+unsigned Shape<L>::symmetry() const {
     auto c = normalize();
     auto s = 0u;
     auto m = 1u;
@@ -80,7 +95,8 @@ unsigned Shape::symmetry() const {
     return s;
 }
 
-bool Shape::connected() const {
+template <size_t L>
+bool Shape<L>::connected() const {
     if (!value) return false;
     auto visited = static_cast<shape_t>(value & -value);
     if (visited == value) return true;
@@ -98,67 +114,18 @@ bool Shape::connected() const {
     }
 }
 
-SymmetryGroup Shape::classify() const {
+template <size_t L>
+SymmetryGroup Shape<L>::classify() const {
     return static_cast<SymmetryGroup>(symmetry());
 }
 
-static_assert(SymmetryGroup::D4 >= SymmetryGroup::D2_XY);
-static_assert(SymmetryGroup::D4 >= SymmetryGroup::D2_PS);
-static_assert(SymmetryGroup::D2_XY >= SymmetryGroup::D1_X);
-static_assert(SymmetryGroup::D2_XY >= SymmetryGroup::D1_Y);
-static_assert(SymmetryGroup::D2_PS >= SymmetryGroup::D1_P);
-static_assert(SymmetryGroup::D2_PS >= SymmetryGroup::D1_S);
-
-static_assert(SymmetryGroup::D4 >= SymmetryGroup::C4);
-static_assert(SymmetryGroup::D2_XY >= SymmetryGroup::C2);
-static_assert(SymmetryGroup::D2_PS >= SymmetryGroup::C2);
-static_assert(SymmetryGroup::D1_X >= SymmetryGroup::C1);
-static_assert(SymmetryGroup::D1_Y >= SymmetryGroup::C1);
-static_assert(SymmetryGroup::D1_P >= SymmetryGroup::C1);
-static_assert(SymmetryGroup::D1_S >= SymmetryGroup::C1);
-
-static_assert(SymmetryGroup::C4 >= SymmetryGroup::C2);
-static_assert(SymmetryGroup::C2 >= SymmetryGroup::C1);
-
-static_assert(SymmetryGroup::D4 * SymmetryGroup::D4 == SymmetryGroup::D4);
-static_assert(SymmetryGroup::D2_XY * SymmetryGroup::D2_XY == SymmetryGroup::D2_XY);
-static_assert(SymmetryGroup::D2_PS * SymmetryGroup::D2_PS == SymmetryGroup::D2_PS);
-static_assert(SymmetryGroup::D1_X * SymmetryGroup::D1_X == SymmetryGroup::D1_X);
-static_assert(SymmetryGroup::D1_Y * SymmetryGroup::D1_Y == SymmetryGroup::D1_Y);
-static_assert(SymmetryGroup::D1_P * SymmetryGroup::D1_P == SymmetryGroup::D1_P);
-static_assert(SymmetryGroup::D1_S * SymmetryGroup::D1_S == SymmetryGroup::D1_S);
-static_assert(SymmetryGroup::C4 * SymmetryGroup::C4 == SymmetryGroup::C4);
-static_assert(SymmetryGroup::C2 * SymmetryGroup::C2 == SymmetryGroup::C2);
-static_assert(SymmetryGroup::C1 * SymmetryGroup::C1 == SymmetryGroup::C1);
-
-static_assert(SymmetryGroup::C4 * SymmetryGroup::D2_XY == SymmetryGroup::D4);
-
 #ifdef FMT_VERSION
-auto fmt::formatter<SymmetryGroup>::format(SymmetryGroup c, format_context &ctx) const
-    -> format_context::iterator {
-    string_view name = "unknown";
-    switch (c) {
-        case SymmetryGroup::C1: name = "C1"; break;
-        case SymmetryGroup::C2: name = "C2"; break;
-        case SymmetryGroup::C4: name = "C4"; break;
-        case SymmetryGroup::D1: name = "D1"; break;
-        case SymmetryGroup::D1_X: name = "D1_X"; break;
-        case SymmetryGroup::D1_Y: name = "D1_Y"; break;
-        case SymmetryGroup::D1_P: name = "D1_P"; break;
-        case SymmetryGroup::D1_S: name = "D1_S"; break;
-        case SymmetryGroup::D2: name = "D2"; break;
-        case SymmetryGroup::D2_XY: name = "D2_XY"; break;
-        case SymmetryGroup::D2_PS: name = "D2_PS"; break;
-        case SymmetryGroup::D4: name = "D4"; break;
-    }
-    return formatter<string_view>::format(name, ctx);
-}
-
-auto fmt::formatter<Shape>::format(Shape c, format_context &ctx) const
+template <size_t L>
+auto fmt::formatter<Shape<L>>::format(Shape<L> c, format_context &ctx) const
     -> format_context::iterator {
     std::string txt;
-    for (auto row = 0u; row < Shape::LEN; row++) {
-        for (auto col = 0u; col < Shape::LEN; col++)
+    for (auto row = 0u; row < Shape<L>::LEN; row++) {
+        for (auto col = 0u; col < Shape<L>::LEN; col++)
             if (c.test(row, col))
                 txt.push_back('@');
             else

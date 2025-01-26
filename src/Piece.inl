@@ -2,7 +2,8 @@
 
 #include <ranges>
 
-bool Piece::cover(coords_t pos, auto &&func) const {
+template <size_t L>
+bool Piece<L>::cover(coords_t pos, auto &&func) const {
     auto [tgtY, tgtX] = pos;
     for (auto &&[p, trs] : std::views::zip(placements, std::views::iota(0zu))) {
         if (!p.enabled)
@@ -22,7 +23,8 @@ bool Piece::cover(coords_t pos, auto &&func) const {
     return false;
 }
 
-bool Piece::cover(auto &&func) const {
+template <size_t L>
+bool Piece<L>::cover(auto &&func) const {
     for (auto &&[p, trs] : std::views::zip(placements, std::views::iota(0zu))) {
         if (!p.enabled)
             continue;
