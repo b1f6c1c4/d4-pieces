@@ -1,6 +1,10 @@
 #include <algorithm>
+#include <filesystem>
+#include <cerrno>
+#include <fcntl.h>
 #include <ranges>
 #include <print>
+#include <list>
 
 #define BOOST_THREAD_VERSION 5
 #include <boost/thread/executors/basic_thread_pool.hpp>
@@ -8,9 +12,7 @@
 
 #include "Piece.hpp"
 #include "Shape.hpp"
-#include "Piece.inl"
-
-using namespace std::placeholders;
+#include "known.hpp"
 
 struct stat_t {
     size_t zeros, singles;
@@ -62,6 +64,7 @@ constexpr inline board_t<11> operator ""_b11(const char *str, size_t len) {
 
 template <size_t L>
 stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board) {
+    using namespace std::placeholders;
     auto func = std::bind(solve_count<L>, lib, _1);
     boost::basic_thread_pool pool;
     std::vector<boost::future<size_t>> futures;
@@ -89,45 +92,71 @@ stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board) {
     return stat;
 }
 
-int main() {
-    std::vector<Shape<8>::shape_t> sh{
-        0b11110000'10000000u,          // L
-        0b11100000'00110000u,          // Z
-        0b01100000'01000000'11000000u, // S
-        0b10000000'10000000'11100000u, // L_
-        0b11100000'11100000u,          // rect
-        0b11100000'11000000u,          // rect-
-        0b11100000'10100000u,          // C
-        0b11110000'00100000u,          // |-
-    };
-    auto pieces = sh
-        | std::views::transform([](Shape<8>::shape_t sh){
-              return Piece<11>{ Shape<11>{ Shape<8>{ sh } } };
-          })
-        | std::ranges::to<std::vector>();
-    //auto board = R"(
-//mmmmmmXX
-//mmmmmmXX
-//ddddddXX
-//ddddddXX
-//ddddddXX
-//ddddddXX
-//ddddddd
-//wwwwwww
-//)"_b8;
-    auto board = R"(
-mmmmmm
-mmmmmm
-ddddddd
-ddddddd
-ddddddd
-ddddddd
-ddd
-)"_b11;
+int enumerate_library(size_t area, char *argv[]) {
+    static constexpr size_t L = 8;
 
-    std::print("count={}\n", board.count);
+    auto min_piece_size = std::stoul(argv[1]);
+    auto max_piece_size = std::stoul(argv[2]);
+    auto min_pieces = std::stoul(argv[3]);
+    auto max_pieces = std::stoul(argv[4]);
 
-    auto stat = evaluate(pieces, board);
-    std::print("zeros={} singles={} min={} max={} avg={}\n",
-            stat.zeros, stat.singles, stat.min, stat.max, stat.avg);
+    std::vector<Shape<L>> shapes;
+    size_t possible_shapes{};
+    auto valid = ::fcntl(3, F_GETFD) != -1 || errno != EBADF;
+    if (valid) {
+        std::print("writing to fd:3 ({})\n",
+            std::filesystem::read_symlink("/proc/self/fd/3").c_str());
+    }
+    [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left) {
+        if (!left) {
+            if (pieces >= min_pieces) {
+                possible_shapes++;
+                if (valid) {
+                    auto sz = shapes.size();
+                    ::write(3, &sz, sizeof(sz));
+                    ::write(3, shapes.data(), shapes.size() * sizeof(Shape<L>));
+                }
+            }
+            return;
+        }
+        while (n <= max_piece_size && i >= shape_count(n))
+            n++, i = 0;
+        if (n > max_piece_size || left < n || pieces >= max_pieces)
+            return;
+        auto sh = shape_at<L>(n, i++);
+        self(n, i, pieces, left); // not taking
+        shapes.push_back(sh);
+        self(n, i, pieces + 1, left - n); // taking
+        shapes.pop_back();
+    }(min_piece_size, 0, 0, area);
+
+    std::print("possible shapes = {}\n", possible_shapes);
+    return 0;
+}
+
+#define L 8
+
+int main(int argc, char *argv[]) {
+    auto board = construct_board<L>(R"(
+mmmmmmXX
+mmmmmmXX
+ddddddXX
+ddddddXX
+ddddddXX
+ddddddXX
+ddddddd
+wwwwwww
+)");
+
+    std::print("working on a board of size={} left={} count={}\n",
+            board.base.size(), board.base.size() - board.regions.size(), board.count);
+
+    using namespace std::string_view_literals;
+
+    if (argv[1] == "enumerate"sv)
+        return enumerate_library(board.base.size() - board.regions.size(), ++argv);
+
+    // auto stat = evaluate(pieces, board);
+    // std::print("zeros={} singles={} min={} max={} avg={}\n",
+    //         stat.zeros, stat.singles, stat.min, stat.max, stat.avg);
 }

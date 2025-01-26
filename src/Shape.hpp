@@ -267,6 +267,11 @@ public:
     [[nodiscard]] bool connected() const;
 
     [[nodiscard]] std::string to_string() const;
+
+    template <size_t M>
+    [[nodiscard]] Shape<M> to() const {
+        return Shape<M>(*this);
+    }
 };
 
 constexpr inline Shape<8> operator ""_s8(const char *str, size_t len) {
