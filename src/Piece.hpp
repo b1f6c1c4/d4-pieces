@@ -5,6 +5,8 @@
 #include <initializer_list>
 #include <vector>
 
+using ssize_t = std::make_signed_t<size_t>;
+
 struct Piece {
     size_t count;
 
@@ -22,6 +24,7 @@ struct Piece {
 
     Piece(Shape s);
     bool cover(coords_t pos, auto &&func) const;
+    bool cover(auto &&func) const;
 };
 
 struct Step {
@@ -42,3 +45,4 @@ struct Solution {
 };
 
 std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board, bool single);
+size_t solve_count(const std::vector<Piece> &lib, Shape board);

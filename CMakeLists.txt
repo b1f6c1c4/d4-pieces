@@ -36,6 +36,9 @@ target_link_options(profile PRIVATE -sENVIRONMENT=shell)
 target_link_options(profile PRIVATE -sMODULARIZE=0)
 
 if(NOT EMSCRIPTEN)
+    add_executable(search src/search.cpp src/Piece.cpp src/Shape.cpp)
+    target_compile_options(search PRIVATE -g -O3)
+
     add_executable(enum src/enum.cpp src/Shape.cpp)
     target_compile_options(enum PRIVATE -g -O3)
 endif()

@@ -1,8 +1,9 @@
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <fstream>
 #include <ranges>
-#include <sstream>
+#include <print>
 #include <thread>
 #include <unordered_map>
 
@@ -26,14 +27,19 @@ int main() {
     Shape board{ 0b11111100'11111100'11111110'11111110'11111110'11111110'11100000ull };
     board = board.transform<false, true, true>(true);
 
+    std::unordered_map<Shape, size_t> map;
     for (auto month = 1; month <= 12; month++) {
         for (auto day = 1; day <= 31; day++) {
             auto m = month;
             auto d = day;
-            auto solutions = solve(pieces, board
-                    .clear((m - 1) / 6, (m - 1) % 6)
-                    .clear((d - 1) / 7 + 2, (d - 1) % 7), false);
-            std::print(std::cout, "{:02}/{:02} => {} solutions\n", m, d, solutions.size());
+            auto b = board
+                .clear((m - 1) / 6, (m - 1) % 6)
+                .clear((d - 1) / 7 + 2, (d - 1) % 7);
+            map.emplace(b, 0);
         }
     }
+
+    cover(map, pieces, false);
+    auto [min, max] = std::ranges::minmax(std::views::elements<1>(map));
+    std::print("min={} max={}\n", min, max);
 }

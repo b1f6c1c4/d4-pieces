@@ -1,4 +1,4 @@
-#include "Piece.hpp"
+#include "Piece.inl"
 
 #include <algorithm>
 #include <limits>
@@ -10,26 +10,6 @@ Piece::Piece(Shape s) : count{ 1 }, canonical{ s } {
         auto duplicate = std::ranges::find(placements, sh, &Placement::normal) != placements.end();
         placements.emplace_back(sh, std::make_pair(sh.bottom(), sh.right()), !duplicate, duplicate);
     }
-}
-
-bool Piece::cover(coords_t pos, auto &&func) const {
-    auto [tgtY, tgtX] = pos;
-    for (auto &&[p, trs] : std::views::zip(placements, std::views::iota(0zu))) {
-        if (!p.enabled)
-            continue;
-        auto [maxY, maxX] = p.max;
-        for (auto [bitY, bitX] : p.normal) {
-            if (bitX > tgtX || bitX + maxX < tgtX)
-                continue;
-            if (bitY > tgtY || bitY + maxY < tgtY)
-                continue;
-            auto x = tgtX - bitX;
-            auto y = tgtY - bitY;
-            if (func(p.normal.translate(x, y), trs, coords_t{ y, x }))
-                return true;
-        }
-    }
-    return false;
 }
 
 Solution::Solution(std::vector<Step> st) : steps{ std::move(st) } {
@@ -105,4 +85,36 @@ std::vector<Solution> solve(const std::vector<Piece> &lib, Shape board, bool sin
         return false;
     }(board);
     return solutions;
+}
+
+size_t solve_count(const std::vector<Piece> &lib, Shape board) {
+    auto count = 0zu;
+    std::vector<size_t> used(lib.size(), 0);
+    auto max_tiles = 0zu;
+    for (auto &p : lib)
+        max_tiles += p.canonical.size() * p.count;
+    [&](this auto &&self, Shape open_tiles) {
+        if (open_tiles.size() > max_tiles)
+            return;
+        if (!open_tiles) {
+            count++;
+            return;
+        }
+        if (open_tiles.size() < min_tiles(lib, used))
+            return;
+        auto pos = open_tiles.front();
+        for (auto &&[p, u, id] : std::views::zip(lib, used, std::views::iota(0zu))) {
+            if (u == p.count) continue;
+            u++;
+            max_tiles -= p.canonical.size();
+            p.cover(pos, [&](Shape placed, size_t trs, coords_t tra) {
+                if (!(open_tiles >= placed)) return false;
+                self(open_tiles - placed);
+                return false;
+            });
+            max_tiles += p.canonical.size();
+            u--;
+        }
+    }(board);
+    return count;
 }

@@ -54,6 +54,10 @@ Shape Shape::translate(int x, int y) const {
     return Shape{ v };
 }
 
+Shape Shape::translate_unsafe(int x, int y) const {
+    return Shape{ value << LEN * y + x };
+}
+
 Shape Shape::canonical_form(unsigned forms) const {
     auto v = normalize().value;
     for (auto sh : transforms(true)) {

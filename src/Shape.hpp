@@ -211,8 +211,12 @@ public:
     // -x  +x
     //   +y
     [[nodiscard]] Shape translate(int x, int y) const;
+    [[nodiscard]] Shape translate_unsafe(int x, int y) const;
     [[nodiscard]] Shape translate(coords_t d) const {
         return translate(d.second, d.first);
+    }
+    [[nodiscard]] Shape translate_unsafe(coords_t d) const {
+        return translate_unsafe(d.second, d.first);
     }
 
     constexpr auto front() const {
