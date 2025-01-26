@@ -46,11 +46,15 @@ public:
         : value{ shape_t(v & FULL) } { }
 
     template <size_t M>
-    explicit constexpr Shape(Shape<M> other) : value{} {
-        auto sh = Shape{};
-        for (auto [y, x] : other)
-            sh = sh.set(y, x);
-        *this = sh;
+    explicit constexpr Shape(const Shape<M> &other) : value{} {
+        if constexpr (L == M) {
+            value = other.value;
+        } else {
+            auto sh = Shape{ 0u };
+            for (auto [y, x] : other)
+                sh = sh.set(y, x);
+            *this = sh;
+        }
     }
 
     SymmetryGroup classify() const {

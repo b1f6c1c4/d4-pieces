@@ -1,4 +1,5 @@
-#include "Shape.hpp"
+#include "known.hpp"
+
 #include <stdexcept>
 
 uint64_t known_shapes_1[]{ 1, };
@@ -26,16 +27,24 @@ size_t shape_count(size_t n) {
     }
 }
 
-Shape shape_at(size_t n, size_t i) {
+template <size_t L>
+Shape<L> shape_at(size_t n, size_t i) {
+    return Shape<L>{ shape_at<8>(n, i) };
+}
+
+template <>
+Shape<8> shape_at<8>(size_t n, size_t i) {
     switch (n) {
-        case 1: return Shape{ known_shapes_1[i] };
-        case 2: return Shape{ known_shapes_2[i] };
-        case 3: return Shape{ known_shapes_3[i] };
-        case 4: return Shape{ known_shapes_4[i] };
-        case 5: return Shape{ known_shapes_5[i] };
-        case 6: return Shape{ known_shapes_6[i] };
-        case 7: return Shape{ known_shapes_7[i] };
-        case 8: return Shape{ known_shapes_8[i] };
+        case 1: return Shape<8>{ known_shapes_1[i] };
+        case 2: return Shape<8>{ known_shapes_2[i] };
+        case 3: return Shape<8>{ known_shapes_3[i] };
+        case 4: return Shape<8>{ known_shapes_4[i] };
+        case 5: return Shape<8>{ known_shapes_5[i] };
+        case 6: return Shape<8>{ known_shapes_6[i] };
+        case 7: return Shape<8>{ known_shapes_7[i] };
+        case 8: return Shape<8>{ known_shapes_8[i] };
         default: throw std::runtime_error{ "not yet computed" };
     }
 }
+
+template Shape<11> shape_at<11>(size_t n, size_t i);
