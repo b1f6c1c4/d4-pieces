@@ -99,7 +99,7 @@ public:
     constexpr Shape &operator=(Shape &&v) noexcept = default;
 
     constexpr operator bool() const { return value; }
-    [[nodiscard]] constexpr auto operator==(const Shape &other) const {
+    [[nodiscard]] constexpr bool operator==(const Shape &other) const {
         return value == other.value;
     }
     [[nodiscard]] constexpr auto operator<=>(const Shape &other) const {

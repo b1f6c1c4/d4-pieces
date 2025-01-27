@@ -10,10 +10,14 @@
 #endif
 
 template <size_t L>
-Piece<L>::Piece(Shape<L> s) : count{ 1 }, canonical{ s } {
+Piece<L>::Piece(Shape<L> s, unsigned sym)
+    : count{ 1 }, canonical{ s } {
     for (auto sh : canonical.transforms(true)) {
-        auto duplicate = std::ranges::find(placements, sh, &Placement::normal) != placements.end();
-        placements.emplace_back(sh, std::make_pair(sh.bottom(), sh.right()), !duplicate, duplicate);
+        if (sym & 1u) {
+            auto duplicate = std::ranges::find(placements, sh, &Placement::normal) != placements.end();
+            placements.emplace_back(sh, std::make_pair(sh.bottom(), sh.right()), !duplicate, duplicate);
+        }
+        sym >>= 1u;
     }
 }
 
@@ -132,12 +136,12 @@ size_t solve_count(const std::vector<Piece<L>> &lib, Shape<L> board) {
     return count;
 }
 
-template Piece<8>::Piece(Shape<8> s);
+template Piece<8>::Piece(Shape<8> s, unsigned sym);
 template Solution<8>::Solution(std::vector<Step<8>> st);
 template std::vector<Solution<8>> solve(const std::vector<Piece<8>> &lib, Shape<8> board, bool single);
 template size_t solve_count(const std::vector<Piece<8>> &lib, Shape<8> board);
 
-template Piece<11>::Piece(Shape<11> s);
+template Piece<11>::Piece(Shape<11> s, unsigned sym);
 template Solution<11>::Solution(std::vector<Step<11>> st);
 template std::vector<Solution<11>> solve(const std::vector<Piece<11>> &lib, Shape<11> board, bool single);
 template size_t solve_count(const std::vector<Piece<11>> &lib, Shape<11> board);

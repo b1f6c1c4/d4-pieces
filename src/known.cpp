@@ -27,6 +27,22 @@ size_t shape_count(size_t n) {
     }
 }
 
+size_t shape_count_C(size_t n) {
+    // A006749
+    switch (n) {
+        case 0: return 0;
+        case 1: return 0;
+        case 2: return 0;
+        case 3: return 0;
+        case 4: return 1;
+        case 5: return 5;
+        case 6: return 20;
+        case 7: return 84;
+        case 8: return 316;
+        default: throw std::runtime_error{ "not yet computed" };
+    }
+}
+
 template <size_t L>
 Shape<L> shape_at(size_t n, size_t i) {
     return Shape<L>{ shape_at<8>(n, i) };

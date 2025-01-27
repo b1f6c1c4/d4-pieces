@@ -3,6 +3,7 @@
 #include "Shape.hpp"
 
 extern size_t shape_count(size_t n);
+extern size_t shape_count_C(size_t n);
 
 template <size_t L>
 Shape<L> shape_at(size_t n, size_t i);

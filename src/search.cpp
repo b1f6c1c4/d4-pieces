@@ -5,7 +5,6 @@
 #include <limits>
 #include <ranges>
 #include <print>
-#include <list>
 
 #define BOOST_THREAD_VERSION 5
 #include <boost/thread/executors/basic_thread_pool.hpp>
@@ -107,14 +106,27 @@ stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board, bool abort_o
     return stat;
 }
 
-int enumerate_library(size_t area, auto &&screening, char *argv[]) {
+template <size_t L>
+std::optional<Shape<L>> flip(Shape<L> sh) {
+    if (auto s = sh.template transform<false, true,  false>(true); s != sh)
+        return s;
+    if (auto s = sh.template transform<false, false, true >(true); s != sh)
+        return s;
+    if (auto s = sh.template transform<true,  false, false>(true); s != sh)
+        return s;
+    if (auto s = sh.template transform<true,  true,  true >(true); s != sh)
+        return s;
+    return {};
+}
+
+int enumerate_library(size_t area, bool restrict_C, auto &&screening, char *argv[]) {
     auto min_piece_size = std::stoul(argv[1]);
     auto max_piece_size = std::stoul(argv[2]);
     auto min_pieces = std::stoul(argv[3]);
     auto max_pieces = std::stoul(argv[4]);
+    auto fork_point = argv[5] ? std::stoul(argv[5]) : restrict_C ? 5 : 8;
 
-    std::vector<Shape<8>> shapes;
-    size_t all_shapes{}, possible_shapes{};
+    std::atomic<size_t> all_shapes{}, possible_shapes{};
     auto valid = ::fcntl(3, F_GETFD) != -1 || errno != EBADF;
     if (valid) {
         std::print("writing to fd:3 ({})\n",
@@ -122,39 +134,63 @@ int enumerate_library(size_t area, auto &&screening, char *argv[]) {
     }
     auto a_threshold = 10zu;
     auto p_threshold = 10zu;
-    [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left) {
+    boost::basic_thread_pool pool;
+    std::atomic<size_t> running_tasks{ 1zu };
+    using shapes_t = std::vector<Shape<8>>;
+    // one task, one *shapes
+    [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left, std::shared_ptr<shapes_t> shapes, size_t depth) -> void {
         if (!left) {
             if (pieces < min_pieces)
-                return;
-            if (++all_shapes % a_threshold == 0) {
-                std::print("all shapes = {} ...\n", all_shapes);
+                goto fin;
+            if (auto a = ++all_shapes; a % a_threshold == 0) {
+                std::print("all shapes = {} ...\n", a);
                 a_threshold *= 10;
             }
-            if (!screening(shapes))
-                return;
-            if (++possible_shapes % p_threshold == 0) {
-                std::print("possible shapes = {} ...\n", possible_shapes);
+            if (!screening(*shapes))
+                goto fin;
+            if (auto p = ++possible_shapes; p % p_threshold == 0) {
+                std::print("possible shapes = {} ...\n", p);
                 p_threshold *= 10;
             }
             if (valid) {
-                auto sz = shapes.size();
+                auto sz = shapes->size();
                 ::write(3, &sz, sizeof(sz));
-                ::write(3, shapes.data(), shapes.size() * sizeof(Shape<8>));
+                ::write(3, shapes->data(), shapes->size() * sizeof(Shape<8>));
             }
-            return;
+            goto fin;
         }
         while (n <= max_piece_size && i >= shape_count(n))
             n++, i = 0;
         if (n > max_piece_size || left < n || pieces >= max_pieces)
-            return;
-        auto sh = shape_at<8>(n, i++);
-        self(n, i, pieces, left); // not taking
-        shapes.push_back(sh);
-        self(n, i, pieces + 1, left - n); // taking
-        shapes.pop_back();
-    }(min_piece_size, 0, 0, area);
+            goto fin;
+        {
+            auto fork = [&](Shape<8> sh) {
+                if (depth < fork_point) {
+                    shapes->push_back(sh);
+                    self(n, i + 1, pieces + 1, left - n, shapes, depth + 1); // taking
+                    shapes->pop_back();
+                } else {
+                    auto shapes_next = std::make_shared<shapes_t>(*shapes); // copy
+                    shapes_next->push_back(sh);
+                    running_tasks.fetch_add(1, std::memory_order_acquire);
+                    boost::async(pool, self, n, i + 1, pieces + 1, left - n, shapes_next, 0); // taking
+                }
+            };
+            self(n, i + 1, pieces, left, shapes, depth + 1); // not taking
+            fork(shape_at<8>(n, i));
+            if (!restrict_C)
+                goto fin;
+            if (auto sh_flip = flip(shape_at<8>(n, i)); sh_flip)
+                fork(*sh_flip);
+        }
+    fin:
+        if (!depth)
+            if (running_tasks.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                pool.close();
+    }(min_piece_size, 0, 0, area, std::make_shared<shapes_t>(), 0);
+    pool.join();
 
-    std::print("possible shapes = {}/{}\n", possible_shapes, all_shapes);
+    std::print("possible shapes = {}/{}\n", possible_shapes.load(), all_shapes.load());
     return 0;
 }
 
@@ -192,16 +228,16 @@ ddddddd
 ddd
 )");
 
-    //auto board = construct_board<L>(R"(
-//mmmmmmXX
-//mmmmmmXX
-//ddddddXX
-//ddddddXX
-//ddddddXX
-//ddddddXX
-//ddddddd
-//wwwwwww
-//)");
+    board = construct_board<L>(R"(
+mmmmmmXX
+mmmmmmXX
+ddddddXX
+ddddddXX
+ddddddXX
+ddddddXX
+ddddddd
+wwwwwww
+)");
 
     std::print("working on a board of size={} left={} count={}\n",
             board.base.size(), board.base.size() - board.regions.size(), board.count);
@@ -209,9 +245,16 @@ ddd
     using namespace std::string_view_literals;
 
     if (argv[1] == "enumerate"sv)
-        return enumerate_library(board.base.size() - board.regions.size(), [&](const auto &shapes) {
+        return enumerate_library(board.base.size() - board.regions.size(), false, [&](const auto &shapes) {
             return screen(shapes
                 | std::views::transform([](Shape<8> sh){ return Piece<L>{ sh.to<L>() }; })
+                | std::ranges::to<std::vector>(), board);
+        }, ++argv);
+
+    if (argv[1] == "enumerate-C"sv)
+        return enumerate_library(board.base.size() - board.regions.size(), true, [&](const auto &shapes) {
+            return screen(shapes
+                | std::views::transform([](Shape<8> sh){ return Piece<L>{ sh.to<L>(), 0b01101001u }; })
                 | std::ranges::to<std::vector>(), board);
         }, ++argv);
 

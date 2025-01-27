@@ -23,7 +23,7 @@ struct Piece {
 
     friend class Library;
 
-    Piece(Shape<L> s);
+    Piece(Shape<L> s, unsigned sym = 0b11111111u);
     bool cover(coords_t pos, auto &&func) const;
     bool cover(auto &&func) const;
 };
@@ -53,12 +53,12 @@ std::vector<Solution<L>> solve(const std::vector<Piece<L>> &lib, Shape<L> board,
 template <size_t L>
 size_t solve_count(const std::vector<Piece<L>> &lib, Shape<L> board);
 
-extern template Piece<8>::Piece(Shape<8> s);
+extern template Piece<8>::Piece(Shape<8> s, unsigned sym);
 extern template Solution<8>::Solution(std::vector<Step<8>> st);
 extern template std::vector<Solution<8>> solve(const std::vector<Piece<8>> &lib, Shape<8> board, bool single);
 extern template size_t solve_count(const std::vector<Piece<8>> &lib, Shape<8> board);
 
-extern template Piece<11>::Piece(Shape<11> s);
+extern template Piece<11>::Piece(Shape<11> s, unsigned sym);
 extern template Solution<11>::Solution(std::vector<Step<11>> st);
 extern template std::vector<Solution<11>> solve(const std::vector<Piece<11>> &lib, Shape<11> board, bool single);
 extern template size_t solve_count(const std::vector<Piece<11>> &lib, Shape<11> board);
