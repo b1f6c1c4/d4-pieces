@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -86,6 +87,7 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
     auto max_piece_size = std::stoul(argv[2]);
     auto min_pieces = std::stoul(argv[3]);
     auto max_pieces = std::stoul(argv[4]);
+    auto fork_point = std::stoul(argv[5]);
 
     std::shared_mutex heap_mtx{};
     std::vector<kvp_t> heap;
@@ -99,41 +101,41 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
             self(it, curr.clear(pos));
     }(board.regions.begin(), board.base);
 
-    size_t found_shapes{}, all_shapes{};
+    std::atomic_size_t found_shapes{}, secondi_shapes{}, all_shapes{}, pending_tasks{ 1u };
     auto valid = ::fcntl(3, F_GETFD) != -1 || errno != EBADF;
     if (valid) {
         std::print("writing to fd:3 ({})\n",
             std::filesystem::read_symlink("/proc/self/fd/3").c_str());
     }
-    std::counting_semaphore sem{ 1024z }; // limit memory consumption of pool
     boost::basic_thread_pool pool;
     std::mutex mtx{};
-    shapes_t shapes;
     auto report_interval = 10;
-    [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left) -> void {
+    // one task, one *shape
+    [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left, shapes_t *shapes, size_t depth) -> void {
         if (!left) {
             if (pieces < min_pieces)
-                return;
-            auto lib = shapes
+                goto fin;
+            auto lib = *shapes
                 | std::views::transform([=](Shape<8> sh){
-                      return Piece<L>{ sh.to<L>(), restrict_C ? 0b10010110u : 0b11111111u };
+                      return Piece<L>{ sh.to<L>(), restrict_C ? 0b01101001u : 0b11111111u };
                   })
                 | std::ranges::to<std::vector>();
+            auto id = all_shapes++;
+            if (id % report_interval == 0) {
+                std::print("#{:09} => total: {}~{}\n",
+                        id, found_shapes.load(), secondi_shapes.load());
+                report_interval *= 4;
+            }
             { // fast-forward, skip check
                 std::shared_lock lock{ heap_mtx };
                 auto k = heap[0].first;
                 lock.unlock();
                 if (solve(lib, k, true).empty()) {
-                    if (all_shapes++ % report_interval == 0) {
-                        std::print("#{:09} ==> total: {}\n", all_shapes, found_shapes);
-                        report_interval *= 4;
-                    }
-                    return;
+                    goto fin;
                 }
             }
-            sem.acquire();
-            boost::async(pool, [&](std::vector<Piece<L>> lib, size_t id) {
-                sem.release();
+            secondi_shapes++;
+            boost::async(pool, [&,id,lib=std::move(lib)]{
                 auto match = 0zu;
                 {
                     std::shared_lock lock{ heap_mtx };
@@ -165,7 +167,8 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
                         }
                     }
                     if (id % report_interval == 0) {
-                        std::print("#{:09} ==> total: {}\n", id, found_shapes);
+                        std::print("#{:09} ==> total: {}~{}\n",
+                                id, found_shapes.load(), secondi_shapes.load());
                         report_interval *= 4;
                     }
                 }
@@ -177,29 +180,45 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
                             std::ranges::subrange{ &heap[0], &heap[board.count] },
                             std::greater{}, &kvp_t::second);
                 }
-            }, std::move(lib), all_shapes++);
-            return;
+            });
+            goto fin;
         }
         while (n <= max_piece_size && i >= shape_count(n))
             n++, i = 0;
         if (n > max_piece_size || left < n || pieces >= max_pieces)
-            return;
-        auto fork = [&](Shape<8> sh) {
-            shapes.push_back(sh);
-            self(n, i + 1, pieces + 1, left - n); // taking
-            shapes.pop_back();
-        };
-        fork(shape_at<8>(n, i));
-        if (restrict_C) {
-            if (auto sh_flip = flip(shape_at<8>(n, i)); sh_flip)
-                fork(*sh_flip);
+            goto fin;
+        {
+            auto fork = [&](Shape<8> sh) {
+                using namespace std::chrono_literals;
+                if (fork_point == 0 || depth < fork_point) {
+                    shapes->push_back(sh);
+                    self(n, i + 1, pieces + 1, left - n, shapes, depth + 1); // taking
+                    shapes->pop_back();
+                } else {
+                    // to be freed by the forked self
+                    auto shapes_next = new shapes_t(*shapes); // copy
+                    shapes_next->push_back(sh);
+                    pending_tasks.fetch_add(1, std::memory_order_acquire);
+                    boost::async(pool, self, n, i + 1, pieces + 1, left - n, shapes_next, 0); // taking
+                }
+            };
+            fork(shape_at<8>(n, i));
+            if (restrict_C) {
+                if (auto sh_flip = flip(shape_at<8>(n, i)); sh_flip)
+                    fork(*sh_flip);
+            }
+            self(n, i + 1, pieces, left, shapes, depth); // not taking
         }
-        self(n, i + 1, pieces, left); // not taking
-    }(min_piece_size, 0, 0, board.base.size() - board.regions.size());
-    pool.close();
+    fin:
+        if (!depth) {
+            delete shapes; // free the shapes created by my fork-parent
+            if (pending_tasks.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                pool.close();
+        }
+    }(min_piece_size, 0, 0, board.base.size() - board.regions.size(), new shapes_t{}, 0);
     pool.join();
 
-    std::print("found shapes = {}/{}\n", found_shapes, all_shapes);
+    std::print("found shapes = {}/{}\n", found_shapes.load(), all_shapes.load());
     return 0;
 }
 
