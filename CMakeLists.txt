@@ -39,6 +39,7 @@ else()
     add_executable(search src/search.cpp src/Piece.cpp src/Shape.cpp src/Group.cpp src/known.cpp)
     target_compile_options(search PRIVATE -g -O3)
     target_link_libraries(search PRIVATE boost_thread)
+    target_link_libraries(search PRIVATE mimalloc)
 
     add_executable(enum src/enum.cpp src/Shape.cpp src/Group.cpp)
     target_compile_options(enum PRIVATE -g -O3)

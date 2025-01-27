@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <cerrno>
 #include <fcntl.h>
@@ -64,12 +65,19 @@ constexpr inline board_t<11> operator ""_b11(const char *str, size_t len) {
 
 template <size_t L>
 bool screen(const std::vector<Piece<L>> &lib, board_t<L> board) {
-    using namespace std::placeholders;
-    auto func = std::bind(solve_count<L>, lib, _1);
     auto b = board.base;
     for (auto r : board.regions)
         b = b.clear(r.front());
-    return !solve(lib, b, true).empty();
+    if (solve(lib, b, true).empty())
+        return false;
+
+    b = board.base;
+    for (auto r : board.regions)
+        b = b.clear(r.back());
+    if (solve(lib, b, true).empty())
+        return false;
+
+    return true;
 }
 
 template <size_t L>
@@ -135,10 +143,12 @@ int enumerate_library(size_t area, bool restrict_C, auto &&screening, char *argv
     auto a_threshold = 10zu;
     auto p_threshold = 10zu;
     boost::basic_thread_pool pool;
-    std::atomic<size_t> running_tasks{ 1zu };
+    std::atomic<size_t> running_tasks{}, pending_tasks{ 1zu };
     using shapes_t = std::vector<Shape<8>>;
     // one task, one *shapes
     [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left, std::shared_ptr<shapes_t> shapes, size_t depth) -> void {
+        if (!depth)
+            running_tasks.fetch_add(1, std::memory_order_relaxed);
         if (!left) {
             if (pieces < min_pieces)
                 goto fin;
@@ -165,28 +175,30 @@ int enumerate_library(size_t area, bool restrict_C, auto &&screening, char *argv
             goto fin;
         {
             auto fork = [&](Shape<8> sh) {
-                if (depth < fork_point) {
+                if (depth < fork_point && running_tasks.load(std::memory_order_relaxed) >= 64) {
                     shapes->push_back(sh);
                     self(n, i + 1, pieces + 1, left - n, shapes, depth + 1); // taking
                     shapes->pop_back();
                 } else {
                     auto shapes_next = std::make_shared<shapes_t>(*shapes); // copy
                     shapes_next->push_back(sh);
-                    running_tasks.fetch_add(1, std::memory_order_acquire);
+                    pending_tasks.fetch_add(1, std::memory_order_acquire);
                     boost::async(pool, self, n, i + 1, pieces + 1, left - n, shapes_next, 0); // taking
                 }
             };
-            self(n, i + 1, pieces, left, shapes, depth + 1); // not taking
             fork(shape_at<8>(n, i));
-            if (!restrict_C)
-                goto fin;
-            if (auto sh_flip = flip(shape_at<8>(n, i)); sh_flip)
-                fork(*sh_flip);
+            if (!restrict_C) {
+                if (auto sh_flip = flip(shape_at<8>(n, i)); sh_flip)
+                    fork(*sh_flip);
+            }
+            self(n, i + 1, pieces, left, shapes, depth + 1); // not taking
         }
     fin:
-        if (!depth)
-            if (running_tasks.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        if (!depth) {
+            running_tasks.fetch_sub(1, std::memory_order_relaxed);
+            if (pending_tasks.fetch_sub(1, std::memory_order_acq_rel) == 1)
                 pool.close();
+        }
     }(min_piece_size, 0, 0, area, std::make_shared<shapes_t>(), 0);
     pool.join();
 

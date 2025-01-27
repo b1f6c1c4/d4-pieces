@@ -238,6 +238,11 @@ public:
         return std::make_pair(id / LEN, id % LEN);
     }
 
+    constexpr auto back() const {
+        auto id = std::bit_width(value) - 1u;
+        return std::make_pair(id / LEN, id % LEN);
+    }
+
     struct bits_proxy {
         shape_t v;
         bool operator==(const bits_proxy &other) const = default;
