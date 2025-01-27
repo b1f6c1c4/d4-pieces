@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -10,6 +9,7 @@
 #include <mutex>
 #include <ranges>
 #include <print>
+#include <shared_mutex>
 #include <sstream>
 
 #define BOOST_THREAD_VERSION 5
@@ -79,10 +79,24 @@ using shapes_t = std::vector<Shape<8>>;
 
 template <size_t L>
 int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
+    using kvp_t = std::pair<Shape<L>, int_fast64_t>;
+
     auto min_piece_size = std::stoul(argv[1]);
     auto max_piece_size = std::stoul(argv[2]);
     auto min_pieces = std::stoul(argv[3]);
     auto max_pieces = std::stoul(argv[4]);
+
+    std::shared_mutex heap_mtx{};
+    std::vector<kvp_t> heap;
+    heap.reserve(board.count); // not actually a heap, but sorted array
+    [&](this auto &&self, auto it, Shape<L> curr) {
+        if (it == board.regions.rend()) {
+            heap.emplace_back(curr, 0);
+            return;
+        }
+        for (auto pos : *it++)
+            self(it, curr.clear(pos));
+    }(board.regions.rbegin(), board.base);
 
     size_t found_shapes{}, all_shapes{};
     auto valid = ::fcntl(3, F_GETFD) != -1 || errno != EBADF;
@@ -93,6 +107,7 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
     boost::basic_thread_pool pool;
     std::mutex mtx{};
     shapes_t shapes;
+    auto report_interval = 10;
     [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left) -> void {
         if (!left) {
             if (pieces < min_pieces)
@@ -104,29 +119,45 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
                       })
                     | std::ranges::to<std::vector>();
                 auto match = 0zu;
-                [&](this auto &&self, auto it, Shape<L> curr) {
-                    if (it == board.regions.rend()) {
-                        if (!solve(lib, curr, true).empty()) {
-                            match++;
-                            return false;
+                {
+                    std::shared_lock lock{ heap_mtx };
+                    for (; match < board.count; match++) {
+                        auto k = heap[match].first;
+                        lock.unlock();
+                        auto fail = solve(lib, k, true).empty();
+                        lock.lock();
+                        std::atomic_ref atm{ heap[match].second };
+                        if (fail) {
+                            atm.fetch_add(1, std::memory_order_relaxed);
+                            break;
                         } else {
-                            return true;
+                            atm.fetch_sub(1, std::memory_order_relaxed);
                         }
                     }
-                    for (auto pos : *it++)
-                        if (self(it, curr.clear(pos)))
-                            return true;
-                    return false;
-                }(board.regions.rbegin(), board.base);
-                std::lock_guard lock{ mtx };
-                std::print("#{} => {}/{}\n", id, match, board.count);
-                if (match == board.count) {
-                    found_shapes++;
-                    if (valid) {
-                        auto sz = the_shapes.size();
-                        ::write(3, &sz, sizeof(sz));
-                        ::write(3, the_shapes.data(), the_shapes.size() * sizeof(Shape<8>));
+                }
+                {
+                    std::lock_guard lock{ mtx };
+                    if (match == board.count) {
+                        found_shapes++;
+                        if (valid) {
+                            auto sz = the_shapes.size();
+                            ::write(3, &sz, sizeof(sz));
+                            ::write(3, the_shapes.data(), the_shapes.size() * sizeof(Shape<8>));
+                        }
                     }
+                    if (id % report_interval == 0) {
+                        std::print("#{:09} ==> {:5}/{:5}     total: {}\n",
+                                id, match, board.count, found_shapes);
+                        report_interval *= 4;
+                    }
+                }
+                {
+                    std::unique_lock lock{ heap_mtx, std::try_to_lock_t{} };
+                    if (!lock.owns_lock())
+                        return;
+                    std::ranges::stable_sort(
+                            std::ranges::subrange{ &heap[0], &heap[board.count] },
+                            std::greater{}, &kvp_t::second);
                 }
             }, shapes, all_shapes++);
             return;
