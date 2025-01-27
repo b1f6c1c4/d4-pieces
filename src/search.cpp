@@ -10,6 +10,7 @@
 #include <ranges>
 #include <print>
 #include <shared_mutex>
+#include <semaphore>
 #include <sstream>
 
 #define BOOST_THREAD_VERSION 5
@@ -90,13 +91,13 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
     std::vector<kvp_t> heap;
     heap.reserve(board.count); // not actually a heap, but sorted array
     [&](this auto &&self, auto it, Shape<L> curr) {
-        if (it == board.regions.rend()) {
+        if (it == board.regions.end()) {
             heap.emplace_back(curr, 0);
             return;
         }
         for (auto pos : *it++)
             self(it, curr.clear(pos));
-    }(board.regions.rbegin(), board.base);
+    }(board.regions.begin(), board.base);
 
     size_t found_shapes{}, all_shapes{};
     auto valid = ::fcntl(3, F_GETFD) != -1 || errno != EBADF;
@@ -104,6 +105,7 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
         std::print("writing to fd:3 ({})\n",
             std::filesystem::read_symlink("/proc/self/fd/3").c_str());
     }
+    std::counting_semaphore sem{ 1024z }; // limit memory consumption of pool
     boost::basic_thread_pool pool;
     std::mutex mtx{};
     shapes_t shapes;
@@ -112,12 +114,26 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
         if (!left) {
             if (pieces < min_pieces)
                 return;
-            boost::async(pool, [&](shapes_t the_shapes, size_t id) {
-                auto lib = the_shapes
-                    | std::views::transform([=](Shape<8> sh){
-                          return Piece<L>{ sh.to<L>(), restrict_C ? 0b10010110u : 0b11111111u };
-                      })
-                    | std::ranges::to<std::vector>();
+            auto lib = shapes
+                | std::views::transform([=](Shape<8> sh){
+                      return Piece<L>{ sh.to<L>(), restrict_C ? 0b10010110u : 0b11111111u };
+                  })
+                | std::ranges::to<std::vector>();
+            { // fast-forward, skip check
+                std::shared_lock lock{ heap_mtx };
+                auto k = heap[0].first;
+                lock.unlock();
+                if (solve(lib, k, true).empty()) {
+                    if (all_shapes++ % report_interval == 0) {
+                        std::print("#{:09} ==> total: {}\n", all_shapes, found_shapes);
+                        report_interval *= 4;
+                    }
+                    return;
+                }
+            }
+            sem.acquire();
+            boost::async(pool, [&](std::vector<Piece<L>> lib, size_t id) {
+                sem.release();
                 auto match = 0zu;
                 {
                     std::shared_lock lock{ heap_mtx };
@@ -140,14 +156,16 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
                     if (match == board.count) {
                         found_shapes++;
                         if (valid) {
-                            auto sz = the_shapes.size();
+                            auto sz = lib.size();
                             ::write(3, &sz, sizeof(sz));
-                            ::write(3, the_shapes.data(), the_shapes.size() * sizeof(Shape<8>));
+                            for (auto &piece : lib) {
+                                auto sh = piece.canonical.template to<8>();
+                                ::write(3, &sh, sizeof(Shape<8>));
+                            }
                         }
                     }
                     if (id % report_interval == 0) {
-                        std::print("#{:09} ==> {:5}/{:5}     total: {}\n",
-                                id, match, board.count, found_shapes);
+                        std::print("#{:09} ==> total: {}\n", id, found_shapes);
                         report_interval *= 4;
                     }
                 }
@@ -159,7 +177,7 @@ int exhaustive_search(const board_t<L> &board, bool restrict_C, char *argv[]) {
                             std::ranges::subrange{ &heap[0], &heap[board.count] },
                             std::greater{}, &kvp_t::second);
                 }
-            }, shapes, all_shapes++);
+            }, std::move(lib), all_shapes++);
             return;
         }
         while (n <= max_piece_size && i >= shape_count(n))
