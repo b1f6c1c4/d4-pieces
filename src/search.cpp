@@ -1,11 +1,16 @@
 #include <algorithm>
 #include <atomic>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <mimalloc-new-delete.h>
 #include <cerrno>
 #include <fcntl.h>
 #include <limits>
+#include <mutex>
 #include <ranges>
 #include <print>
+#include <sstream>
 
 #define BOOST_THREAD_VERSION 5
 #include <boost/thread/executors/basic_thread_pool.hpp>
@@ -81,7 +86,30 @@ bool screen(const std::vector<Piece<L>> &lib, board_t<L> board) {
 }
 
 template <size_t L>
-stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board, bool abort_on_zero) {
+size_t evaluate_fast(const std::vector<Piece<L>> &lib, board_t<L> board) {
+    using namespace std::placeholders;
+    auto func = [&](Shape<L> b){ return solve<L>(lib, b, true).empty(); };
+    boost::basic_thread_pool pool;
+    std::vector<boost::future<bool>> futures;
+    [&](this auto &&self, auto it, Shape<L> curr) {
+        if (it == board.regions.end()) {
+            futures.emplace_back(boost::async(pool, func, curr));
+            return;
+        }
+        for (auto pos : *it++)
+            self(it, curr.clear(pos));
+    }(board.regions.begin(), board.base);
+    auto total = 0zu;
+    for (auto &f : futures) {
+        f.wait();
+        if (f.get())
+            total++;
+    }
+    return total;
+}
+
+template <size_t L>
+stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board) {
     using namespace std::placeholders;
     auto func = std::bind(solve_count<L>, lib, _1);
     boost::basic_thread_pool pool;
@@ -100,10 +128,6 @@ stat_t evaluate(const std::vector<Piece<L>> &lib, board_t<L> board, bool abort_o
     for (auto &f : futures) {
         f.wait();
         auto v = f.get();
-        if (!v && abort_on_zero) {
-            pool.interrupt_and_join();
-            return { 1 };
-        }
         if (v == 0) stat.zeros++;
         if (v == 1) stat.singles++;
         stat.min = std::min(stat.min, v);
@@ -143,27 +167,27 @@ int enumerate_library(size_t area, bool restrict_C, auto &&screening, char *argv
     auto a_threshold = 10zu;
     auto p_threshold = 10zu;
     boost::basic_thread_pool pool;
-    std::atomic<size_t> running_tasks{}, pending_tasks{ 1zu };
+    std::mutex mtx{};
+    std::atomic<size_t> all_tasks{}, pending_tasks{ 1zu };
     using shapes_t = std::vector<Shape<8>>;
     // one task, one *shapes
-    [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left, std::shared_ptr<shapes_t> shapes, size_t depth) -> void {
-        if (!depth)
-            running_tasks.fetch_add(1, std::memory_order_relaxed);
+    [&](this auto &&self, size_t n, size_t i, size_t pieces, size_t left, shapes_t *shapes, size_t depth) -> void {
         if (!left) {
             if (pieces < min_pieces)
                 goto fin;
             if (auto a = ++all_shapes; a % a_threshold == 0) {
                 std::print("all shapes = {} ...\n", a);
-                a_threshold *= 10;
+                a_threshold *= 4;
             }
             if (!screening(*shapes))
                 goto fin;
             if (auto p = ++possible_shapes; p % p_threshold == 0) {
                 std::print("possible shapes = {} ...\n", p);
-                p_threshold *= 10;
+                p_threshold *= 4;
             }
             if (valid) {
                 auto sz = shapes->size();
+                std::lock_guard lock{ mtx };
                 ::write(3, &sz, sizeof(sz));
                 ::write(3, shapes->data(), shapes->size() * sizeof(Shape<8>));
             }
@@ -174,20 +198,24 @@ int enumerate_library(size_t area, bool restrict_C, auto &&screening, char *argv
         if (n > max_piece_size || left < n || pieces >= max_pieces)
             goto fin;
         {
+            auto at = all_tasks.fetch_add(1, std::memory_order_relaxed);
             auto fork = [&](Shape<8> sh) {
-                if (depth < fork_point && running_tasks.load(std::memory_order_relaxed) >= 64) {
+                if (fork_point == 0 || depth < fork_point && at >= 64) {
                     shapes->push_back(sh);
                     self(n, i + 1, pieces + 1, left - n, shapes, depth + 1); // taking
                     shapes->pop_back();
                 } else {
-                    auto shapes_next = std::make_shared<shapes_t>(*shapes); // copy
+                    // to be freed by the forked self
+                    auto shapes_next = new shapes_t(*shapes); // copy
                     shapes_next->push_back(sh);
+                    if (at < 64)
+                        all_tasks.fetch_add(1, std::memory_order_relaxed);
                     pending_tasks.fetch_add(1, std::memory_order_acquire);
                     boost::async(pool, self, n, i + 1, pieces + 1, left - n, shapes_next, 0); // taking
                 }
             };
             fork(shape_at<8>(n, i));
-            if (!restrict_C) {
+            if (restrict_C) {
                 if (auto sh_flip = flip(shape_at<8>(n, i)); sh_flip)
                     fork(*sh_flip);
             }
@@ -195,11 +223,11 @@ int enumerate_library(size_t area, bool restrict_C, auto &&screening, char *argv
         }
     fin:
         if (!depth) {
-            running_tasks.fetch_sub(1, std::memory_order_relaxed);
+            delete shapes; // free the shapes
             if (pending_tasks.fetch_sub(1, std::memory_order_acq_rel) == 1)
                 pool.close();
         }
-    }(min_piece_size, 0, 0, area, std::make_shared<shapes_t>(), 0);
+    }(min_piece_size, 0, 0, area, new shapes_t(), 0);
     pool.join();
 
     std::print("possible shapes = {}/{}\n", possible_shapes.load(), all_shapes.load());
@@ -208,48 +236,67 @@ int enumerate_library(size_t area, bool restrict_C, auto &&screening, char *argv
 
 #define L 8
 
-int evaluate_libraries(const board_t<L> &board, char *argv[]) {
-    (void)argv;
-    while (true) {
+int evaluate_libraries(const board_t<L> &board, bool restrict_C, char *argv[]) {
+    auto id = std::stoull(argv[1]);
+    for (auto i = 0zu; ; i++) {
         size_t sz;
         if (::read(3, &sz, sizeof(sz)) != sizeof(sz))
             break;
+        std::cout.flush();
+        if (id != i) {
+            ::lseek(3, sz * sizeof(Shape<8>), SEEK_CUR);
+            continue;
+        }
         std::vector<Piece<L>> pieces;
         pieces.reserve(sz);
         for (auto i = 0zu; i < sz; i++) {
             Shape<8> sh{ 0u };
+            auto sym = restrict_C ? 0b01101001u : 0b11111111u;
             ::read(3, &sh, sizeof(sh));
-            pieces.emplace_back(sh.to<L>());
+            pieces.emplace_back(sh.to<L>(), sym);
         }
-        auto stat = evaluate(pieces, board, true);
-        if (!stat.zeros)
-            std::print("zeros={} singles={} min={} max={} avg={}\n",
-                    stat.zeros, stat.singles, stat.min, stat.max, stat.avg);
+        auto zeros = evaluate_fast(pieces, board);
+        if (!zeros)
+            std::print("$$$$$$$$$$$$$$$$$$$$$$$\n");
+        std::print("#{:05}/{:2} zeros={:5}\n",
+                i, sz, zeros);
+        // auto stat = evaluate(pieces, board);
+        // if (!stat.zeros)
+        //     std::print("$$$$$$$$$$$$$$$$$$$$$$$\n");
+        // std::print("#{:05}/{:2} zeros={:5} singles={:5} min={:2} max={:5} avg={:.2f}\n",
+        //         i, sz, stat.zeros, stat.singles, stat.min, stat.max, stat.avg);
+    }
+    return 0;
+}
+
+int show_libraries(char *argv[]) {
+    auto id = std::stoull(argv[1]);
+    for (auto i = 0zu; ; i++) {
+        size_t sz;
+        if (::read(3, &sz, sizeof(sz)) != sizeof(sz))
+            break;
+        std::cout.flush();
+        std::vector<Piece<L>> pieces;
+        pieces.reserve(sz);
+        if (id != i)
+            ::lseek(3, sz * sizeof(Shape<8>), SEEK_CUR);
+        else
+            for (auto i = 0zu; i < sz; i++) {
+                Shape<8> sh{ 0u };
+                ::read(3, &sh, sizeof(sh));
+                std::cout << sh.to_string();
+            }
     }
     return 0;
 }
 
 int main(int argc, char *argv[]) {
-    auto board = construct_board<L>(R"(
-mmmmmm
-mmmmmm
-ddddddd
-ddddddd
-ddddddd
-ddddddd
-ddd
-)");
-
-    board = construct_board<L>(R"(
-mmmmmmXX
-mmmmmmXX
-ddddddXX
-ddddddXX
-ddddddXX
-ddddddXX
-ddddddd
-wwwwwww
-)");
+    std::stringstream buffer;
+    {
+        std::ifstream fin(argv++[1]);
+        buffer << fin.rdbuf();
+    }
+    auto board = construct_board<L>(std::string_view(buffer.str()));
 
     std::print("working on a board of size={} left={} count={}\n",
             board.base.size(), board.base.size() - board.regions.size(), board.count);
@@ -271,5 +318,11 @@ wwwwwww
         }, ++argv);
 
     if (argv[1] == "evaluate"sv)
-        return evaluate_libraries(board, ++argv);
+        return evaluate_libraries(board, false, ++argv);
+
+    if (argv[1] == "evaluate-C"sv)
+        return evaluate_libraries(board, true, ++argv);
+
+    if (argv[1] == "show"sv)
+        return show_libraries(++argv);
 }
