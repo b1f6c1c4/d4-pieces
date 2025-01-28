@@ -76,17 +76,21 @@ unsigned Shape::symmetry() const {
     return s;
 }
 
+Shape Shape::extend1() const {
+    auto north = value >> LEN;
+    auto south = value << LEN;
+    auto west = (value & ~FIRST_COL) >> 1u;
+    auto east = (value << 1u) & ~FIRST_COL;
+    return Shape{ value | north | south | west | east };
+}
+
 bool Shape::connected() const {
     if (!value) return false;
-    auto visited = static_cast<shape_t>(value & -value);
+    auto visited = front_shape();
     if (visited == value) return true;
     while (true) {
-        auto north = visited >> LEN;
-        auto south = visited << LEN;
-        auto west = (visited & ~FIRST_COL) >> 1u;
-        auto east = (visited << 1u) & ~FIRST_COL;
-        auto next = (visited | north | south | west | east) & value;
-        if (next == value)
+        auto next = Shape{ visited }.extend1() & *this;
+        if (next == *this)
             return true;
         if (next == visited)
             return false;
