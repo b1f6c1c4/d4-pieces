@@ -62,14 +62,11 @@ int main(int argc, char *argv[]) {
             threads.emplace_back(worker, 1ull << (std::stoi(argv[2]) - 7), i);
     }
 
-    std::print(std::cout, R"(#include "Shape.hpp"
-#include <stdexcept>
-
-)");
+    std::print(std::cout, "#include \"known.hpp\"\n\n");
     for (auto &&[bin, i] : std::views::zip(bins, std::views::iota(0zu))) {
         if (!i) continue;
 
-        std::print(std::cout, "uint64_t known_{}shapes_{}[]{{ ", prefix, i);
+        std::print(std::cout, "static const uint64_t s{}[]{{ ", i);
         auto values = bin.set | std::views::transform(&Shape::get_value)
             | std::ranges::to<std::vector>();
         std::ranges::sort(values);
@@ -79,29 +76,15 @@ int main(int argc, char *argv[]) {
         std::print(std::cerr, "[{}] => {}\n", i, bin.set.size());
     }
 
-    std::print(std::cout, R"(
-size_t shape_{}count(size_t n) {{
-    switch (n) {{
-)", prefix);
-    for (auto &&[bin, i] : std::views::zip(bins, std::views::iota(0zu))) {
-        std::print(std::cout, "        case {}: return {};\n", i, bin.set.size());
-    }
-    std::print(std::cout, R"(        default: throw std::runtime_error{{ "not yet computed" }};
-    }}
-}}
-)");
+    std::print(std::cout, "\nconst uint64_t * const known_{}shapes[]{{ nullptr, ", prefix);
+    for (auto &&[bin, i] : std::views::zip(bins, std::views::iota(0zu)))
+        if (i)
+            std::print(std::cout, "s{}, ", i);
+    std::print(std::cout, "}};\n");
 
-    std::print(std::cout, R"(
-Shape shape_{}at(size_t n, size_t i) {{
-    switch (n) {{
-)", prefix);
+    std::print(std::cout, "\nconst size_t shapes_{}count[]{{ ", prefix);
     for (auto &&[bin, i] : std::views::zip(bins, std::views::iota(0zu))) {
-        if (!i) continue;
-        std::print(std::cout, "        case {}: return Shape{{ known_{}shapes_{}[i] }};\n",
-                i, prefix, i);
+        std::print(std::cout, "{}, ", bin.set.size());
     }
-    std::print(std::cout, R"(        default: throw std::runtime_error{{ "not yet computed" }};
-    }}
-}}
-)");
+    std::print(std::cout, "}};\n");
 }

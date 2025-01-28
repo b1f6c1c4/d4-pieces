@@ -18,6 +18,8 @@ struct Naming {
 
     // thread-safe
     [[nodiscard]] uint64_t size() const {
+        if (partition_sizes_cumsum.empty())
+            return 0;
         return partition_sizes_cumsum.back();
     }
 
@@ -31,11 +33,11 @@ struct Naming {
     // void func(uint64_t)
     bool resolve(uint64_t nm, auto &&func) const;
 
-private:
     uint64_t min_m, max_m, min_n, max_n, tgt;
     const uint64_t * const *arr;
     const size_t *arr_sizes;
 
+private:
     using V = std::vector<uint64_t>;
     using VV = std::vector<V>;
 
