@@ -17,7 +17,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--no-undefined")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 
-add_executable(pieces src/wasm.cpp src/Piece.cpp src/Shape.cpp src/known.cpp)
+add_executable(pieces src/wasm.cpp src/Piece.cpp src/Shape.cpp src/known1.cpp)
 target_link_options(pieces PRIVATE -sWASM_BIGINT)
 target_link_options(pieces PRIVATE -sASSERTIONS)
 target_link_options(pieces PRIVATE -sALLOW_MEMORY_GROWTH=1)
