@@ -27,12 +27,15 @@ Naming::Naming(uint64_t m, uint64_t M, uint64_t n, uint64_t N, uint64_t t, const
     // find partitions
     V curr;
     [&,that=this](this auto &&self, uint64_t left, uint64_t n) {
+        auto m = that->min_m + curr.size();
         if (!left) {
-            if (n >= that->min_n)
+            if (n >= that->min_n) {
+                curr.resize(that->max_m - that->min_m + 1, 0);
                 that->partitions.push_back(curr);
+                curr.resize(m - that->min_m, 0);
+            }
             return;
         }
-        auto m = that->min_m + curr.size();
         if (m > that->max_m)
             return;
         curr.push_back(0);
@@ -63,40 +66,16 @@ Naming::Naming(uint64_t m, uint64_t M, uint64_t n, uint64_t N, uint64_t t, const
         std::back_inserter(partition_sizes_cumsum));
 }
 
-void Naming::resolve_binomial(std::vector<uint64_t> &out, uint64_t k, uint64_t m, uint64_t nm) const {
-    auto sz = arr_sizes[m];
-    for (auto i = 0zu; k; i++) {
-        auto mid = binomial(sz - 1, k - 1);
-        if (nm < mid) { // i was chosen
-            out.push_back(arr[m][i]);
-            k--;
-        } else { // i was not chosen
-            nm -= mid;
-        }
-        sz--;
-    }
-}
+/* testing
 
-std::vector<uint64_t> Naming::resolve(uint64_t nm) const {
-    std::vector<uint64_t> answer;
-    auto partition_it = std::ranges::upper_bound(partition_sizes_cumsum, nm);
-    if (partition_it == partition_sizes_cumsum.end())
-        return {}; // nm too large
-    auto partition_id = partition_it - partition_sizes_cumsum.begin();
-    if (partition_id)
-        nm -= partition_sizes_cumsum[partition_id - 1];
-    auto &msrcp = m_sizes_rcumprod[partition_id];
-    for (auto &&[rcp, k, d] : std::views::zip(msrcp, partitions[partition_id], std::views::iota(0ull)))
-        resolve_binomial(answer, k, min_m + d, nm / rcp), nm %= rcp;
-    return answer;
-}
+#include "naming.inl"
 
 int main() {
     uint64_t v2[]{ 21, 22, 23 };
-    uint64_t v4[]{ 41, 42, 43, 44, 45, 46 };
-    uint64_t v5[]{ 51, 52, 53, 54, 55 };
+    uint64_t v4[]{ 41, 42, 43, 44, 45, 46, 47 };
+    uint64_t v5[]{ 51, 52, 53, 54, 55, 56 };
     uint64_t *arr[]{ 0, 0, v2, 0, v4, v5 };
-    size_t arr_sz[]{ 0, 0, 3, 0, 6, 5 };
+    size_t arr_sz[]{ 0, 0, 3, 0, 7, 6 };
     Naming nm{
         2, 5,
         2, 8,
@@ -106,15 +85,19 @@ int main() {
     };
     std::print("sz={}\n", nm.size());
     for (auto i = 0ull; i < nm.size(); i++) {
-        auto res = nm.resolve(i);
+        std::vector<uint64_t> res;
+        nm.resolve(i, [&](uint64_t v){res.push_back(v);});
         auto tgt = 0;
         for (auto x : res)
             tgt += x / 10;
-        if (20 == tgt)
-            continue;
-        std::print("#{}/{} = [ ", i, nm.size());
-        for (auto x : res)
-            std::print("{}, ", x);
-        std::print("]\n");
+        auto v = nm.name([&](uint64_t v){return std::ranges::find(res, v) != res.end();});
+        if (20 != tgt || *v != i) {
+            std::print("#{}/{} = [ ", i, nm.size());
+            for (auto x : res)
+                std::print("{}, ", x);
+            std::print("] ==> {}\n", *v);
+        }
     }
 }
+
+*/
