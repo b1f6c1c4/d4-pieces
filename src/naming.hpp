@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 // partition tgt into at least min_n, at most max_n parts
@@ -21,11 +22,14 @@ struct Naming {
     }
 
     // thread-safe
-    // proj(*begin) => uint64_t must be one of arr[*]
-    [[nodiscard]] uint64_t name(auto &&begin, auto &&end, auto &&proj) const;
+    // O(sum(arr_sizes) * func)
+    // bool func(uint64_t) -> true iff used
+    [[nodiscard]] std::optional<uint64_t> name(auto &&func) const;
 
     // thread-safe
-    [[nodiscard]] std::vector<uint64_t> resolve(uint64_t nm) const;
+    // O(sum(arr_sizes) * func)
+    // void func(uint64_t)
+    bool resolve(uint64_t nm, auto &&func) const;
 
 private:
     uint64_t min_m, max_m, min_n, max_n, tgt;
@@ -39,7 +43,8 @@ private:
     static uint64_t binomial(uint64_t n, uint64_t m);
 
     // find the nm-th way of choosing k out of arr_size[m] objects
-    void resolve_binomial(std::vector<uint64_t> &out, uint64_t k, uint64_t m, uint64_t nm) const;
+    uint64_t name_binomial(auto &&func, uint64_t k, uint64_t m) const;
+    void resolve_binomial(auto &&func, uint64_t k, uint64_t m, uint64_t nm) const;
 
     VV partitions; // tgt == sum((min_m + d) * partitions[*][d], d = 0...max_m-min_m)
     V partition_sizes; // partition_sizes[*] = product(m_sizes[*][d], d = 0...max_m-min_m)
