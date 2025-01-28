@@ -1,5 +1,6 @@
 #include "naming.hpp"
 
+#include <algorithm>
 #include <ranges>
 
 std::optional<uint64_t> Naming::name(auto &&func) const {

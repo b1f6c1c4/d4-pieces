@@ -193,6 +193,10 @@ public:
         return Shape{ value | 1ull << (row * LEN + col) };
     }
 
+    [[nodiscard]] Shape set(coords_t pos) const {
+        return set(pos.first, pos.second);
+    }
+
     [[nodiscard]] Shape clear(size_t row, size_t col) const {
         return Shape{ value & ~(1ull << (row * LEN + col)) };
     }
