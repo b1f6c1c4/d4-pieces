@@ -162,8 +162,12 @@ public:
         return LEN - top() - height();
     }
 
-    [[nodiscard]] constexpr Shape operator+(Shape other) const {
-        return Shape{ value | ~other.value };
+    [[nodiscard]] constexpr Shape operator|(Shape other) const {
+        return Shape{ value | other.value };
+    }
+
+    [[nodiscard]] constexpr Shape operator&(Shape other) const {
+        return Shape{ value & other.value };
     }
 
     [[nodiscard]] constexpr Shape operator-(Shape other) const {
@@ -245,6 +249,12 @@ public:
     [[nodiscard]] Shape canonical_form(unsigned forms = 0b11111111u) const;
 
     [[nodiscard]] unsigned symmetry() const;
+
+    [[nodiscard]] Shape front_shape() const {
+        return Shape{ static_cast<shape_t>(value & -value) };
+    }
+
+    [[nodiscard]] Shape extend1() const;
 
     [[nodiscard]] bool connected() const;
 };
