@@ -55,7 +55,7 @@ Shape Shape::translate(int x, int y) const {
 }
 
 Shape Shape::canonical_form(unsigned forms) const {
-    auto v = normalize().value;
+    auto v = ~shape_t{};
     for (auto sh : transforms(true)) {
         if (forms & 1u)
             v = std::min(v, sh.value);
