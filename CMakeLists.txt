@@ -38,6 +38,7 @@ if(EMSCRIPTEN)
 else()
     add_executable(search
         src/search.cpp
+        src/searcher.cpp
         src/naming.cpp
         src/Piece.cpp src/Shape.cpp src/Group.cpp
         src/known1.cpp src/known2.cpp)
