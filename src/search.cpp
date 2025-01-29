@@ -63,26 +63,45 @@ struct FileSearcherBase : SearcherFactory {
     };
     static_assert(sizeof(config_descriptor) == 32);
 
-    // file structure:
-    // config_descriptor[g_board->count]
-    // sz bytes of ledger
-
     config_descriptor *cfgs;
+    uint64_t *nmes;
     unsigned char *ledger;
+
+    size_t cfgs_size, nmes_size, ledger_size;
     size_t mem_sz;
 
+    // mtxs[i] protects nmes[k * mtxs_count + i]
+    size_t mtxs_count;
+    std::mutex *mtxs;
+
+    // no copy no move
     FileSearcherBase(const char *fn, size_t w)
-        : fd{ -1 }, cfgs{}, ledger{},
-          mem_sz{ g_board->count * sizeof(config_descriptor) + g_nme->size() * w } {
-        std::print("file sizing:\n  - header: {} x {} = {} B\n  - ledger: {} x {} = {} B\ntotal: {} B\n",
-            g_board->count, sizeof(config_descriptor), g_board->count * sizeof(config_descriptor),
-            g_nme->size(), w, g_nme->size() * w,
-            mem_sz);
+        : fd{ -1 }, cfgs{}, nmes{}, ledger{},
+          cfgs_size{ g_board->count * sizeof(config_descriptor) },
+          nmes_size{ g_nme->size() * sizeof(uint64_t) },
+          ledger_size{ g_nme->size() * w },
+          mem_sz{ cfgs_size + nmes_size + ledger_size },
+          mtxs_count{ 8 * boost::thread::hardware_concurrency() },
+          mtxs{ new std::mutex[mtxs_count]{} } {
         using namespace std::string_literals;
+
+        std::print(R"(file sizing:
+  - cfg header: {} x {} = {} B
+  - nme header: {} x {} = {} B
+  - ledger: {} x {} = {} B
+total: {} B
+)",
+            g_board->count, sizeof(config_descriptor), cfgs_size,
+            g_nme->size(), sizeof(uint64_t), nmes_size,
+            g_nme->size(), w, ledger_size,
+            mem_sz);
+
         fd = ::open(fn, O_RDWR | O_CREAT | O_NOATIME,
                 S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
         if (fd == -1)
             throw std::runtime_error{ "open(2): "s + std::strerror(errno) };
+
+        // verify file size
         auto operate_at = [&](bool w, uint64_t pos) {
             if (::lseek(fd, pos, SEEK_SET) == -1)
                 throw std::runtime_error{ "lseek(2): "s + std::strerror(errno) };
@@ -104,11 +123,15 @@ struct FileSearcherBase : SearcherFactory {
         if (!operate_at(false, 0)) // pad to mem_sz
             operate_at(true, mem_sz - 1);
         operate_at(false, 0);
+
         auto m = ::mmap(nullptr, mem_sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED)
             throw std::runtime_error{ "mmap(2): "s + std::strerror(errno) };
-        cfgs = reinterpret_cast<config_descriptor *>(m);
-        ledger = reinterpret_cast<unsigned char *>(m) + g_board->count * sizeof(config_descriptor);
+        auto mc = reinterpret_cast<unsigned char *>(m);
+        cfgs = reinterpret_cast<config_descriptor *>(mc);
+        nmes = reinterpret_cast<uint64_t *>(mc += cfgs_size);
+        ledger = reinterpret_cast<unsigned char *>(mc += nmes_size);
+
         auto total = 0ull;
         auto num = 0ull;
         for (auto i = 0ull; i < g_board->count; i++)
@@ -123,6 +146,8 @@ struct FileSearcherBase : SearcherFactory {
 
     ~FileSearcherBase() noexcept {
         using namespace std::string_literals;
+        if (mtxs)
+            delete [] mtxs;
         if (cfgs && ::munmap(cfgs, mem_sz))
             std::print("mmap(2): {}", std::strerror(errno));
         if (fd != -1 && ::close(fd))
@@ -139,6 +164,11 @@ struct FileSearcherBase : SearcherFactory {
         cfgs[i].count = cnt;
         cfgs[i].solved = ms;
     }
+
+    void update_nmes(uint64_t v) {
+        std::lock_guard lock{ mtxs[v % mtxs_count] };
+        nmes[v]++;
+    }
 };
 
 struct FileByte : FileSearcherBase {
@@ -148,10 +178,12 @@ struct FileByte : FileSearcherBase {
         FileByte &parent;
         explicit S(FileByte &p) : parent{ p } { }
         bool log(uint64_t v) {
+            // no need to atomic, because only one task may access this
             auto &l = parent.ledger[v * g_board->count + config_index];
             if (!l) {
-                parent.incr_work();
                 l = 0xff;
+                parent.update_nmes(v);
+                parent.incr_work();
                 return true;
             }
             return false;
@@ -159,35 +191,27 @@ struct FileByte : FileSearcherBase {
     };
     Searcher *make() override { return new S{ *this }; };
     static uint64_t size() {
-        return g_nme->size() * g_board->count;
+        return g_nme->size() * (g_board->count + sizeof(uint64_t));
     }
 };
 
 struct FileBit : FileSearcherBase {
-    size_t mtxs_count;
-    std::mutex *mtxs;
-    // no copy no move
+    // mtxs[i] protects ledger[k * mtxs_count + i]
     FileBit(const char *fn)
-        : FileSearcherBase{ fn, (g_board->count + 7) / 8 },
-          mtxs_count{ 8 * boost::thread::hardware_concurrency() },
-          mtxs{ new std::mutex[mtxs_count]{} } { }
-    ~FileBit() {
-        if (mtxs) {
-            delete [] mtxs;
-            mtxs = nullptr;
-        }
-    }
+        : FileSearcherBase{ fn, (g_board->count + 7) / 8 } { }
     struct S : Searcher {
         FileBit &parent;
         explicit S(FileBit &p) : parent{ p } { }
         bool log(uint64_t v) {
             auto index = v * ((g_board->count + 7) / 8) + config_index / 8;
             auto mask = 1ull << (config_index % 8);
-            std::lock_guard lock{ parent.mtxs[index % parent.mtxs_count] };
+            std::unique_lock lock{ parent.mtxs[index % parent.mtxs_count] };
             auto &l = parent.ledger[index];
             if (!(l & mask)) {
-                parent.incr_work();
                 l |= mask;
+                lock.unlock(); // avoid deadlock
+                parent.update_nmes(v);
+                parent.incr_work();
                 return true;
             }
             return false;
@@ -195,7 +219,7 @@ struct FileBit : FileSearcherBase {
     };
     Searcher *make() override { return new S{ *this }; };
     static uint64_t size() {
-        return g_nme->size() * ((g_board->count + 7) / 8);
+        return g_nme->size() * ((g_board->count + 7) / 8 + sizeof(uint64_t));
     }
 };
 
