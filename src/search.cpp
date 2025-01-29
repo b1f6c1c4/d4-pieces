@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <sys/mman.h>
+#include <random>
 #include <mimalloc-new-delete.h>
 
 #define BOOST_THREAD_VERSION 5
@@ -25,14 +26,23 @@
 #include "naming.inl"
 
 // Shape -> piece naming
-std::unordered_map<Shape<8>, uint64_t> fast_canonical_form;
+// use 240MiB of memory to guarantee no hash collision
+static constexpr size_t fast_canonical_form_mod = 30878073; // dark magic; don't touch
+uint64_t fast_canonical_form[fast_canonical_form_mod]; // bss, zero-initialized
 void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
-    fast_canonical_form.reserve(nm.size_pieces() * 8 * 8 * std::popcount(sym));
     auto count = 0zu;
-    auto push_translate = [](uint64_t nm, Shape<8> t) {
+    auto ttcount = 0zu;
+    auto push_translate = [&](uint64_t nm, Shape<8> t) {
         for (auto row = 0u; row <= t.bottom(); row++)
-            for (auto col = 0u; col <= t.right(); col++)
-                fast_canonical_form.emplace(t.translate_unsafe(col, row), nm);
+            for (auto col = 0u; col <= t.right(); col++) {
+                ttcount++;
+                auto v = t.translate_unsafe(col, row).get_value();
+                auto &elem = fast_canonical_form[v % fast_canonical_form_mod];
+                // note: hash collision on nm == 0 are undiscoverable
+                if (elem && elem != nm)
+                    throw std::runtime_error{ "panic: dark magic doesn't work!" };
+                elem = nm;
+            }
     };
     for (auto m = nm.min_m; m <= nm.max_m; m++) {
         for (auto i = 0zu; i < nm.arr_sizes[m]; i++) {
@@ -45,8 +55,37 @@ void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
             }
         }
     }
-    std::print("cached {} => {} canonical forms\n",
-            fast_canonical_form.size(), count);
+    std::print("cached {}/{} => {} canonical forms\n", ttcount, fast_canonical_form_mod, count);
+    // the code searching for dark magic
+    /*
+    std::atomic<uint64_t> best{ ~0ull };
+    {
+        std::vector<std::jthread> thrs;
+        for (auto i = 0; i < 128; i++)
+            thrs.emplace_back([&](int seed) {
+                std::mt19937_64 rnd{};
+                rnd.seed(seed);
+                std::uniform_int_distribution<uint64_t> dist(map.size(), 30878073ull);
+                std::vector<char> fm(30878073ull, 0);
+            bad:
+                auto mod = dist(rnd);
+                std::memset(fm.data(), 0, mod);
+                for (auto [k, v] : map) {
+                    if (fm[k.get_value() % mod])
+                        goto bad;
+                    fm[k.get_value() % mod] = true;
+                }
+                auto old = best.load();
+                if (mod >= old) goto bad;
+                while (best.compare_exchange_weak(old, mod, std::memory_order_relaxed))
+                    if (mod >= old) goto bad;
+                std::print("found: {}/{} => {} canonical forms\n", map.size(), mod, count);
+                goto bad;
+            }, i);
+    }
+    std::print("cached {}/{} => {} canonical forms\n", map.size(), fast_canonical_form_mod, count);
+    std::abort();
+    */
 }
 
 static std::atomic_uint64_t g_work_counter, g_board_counter;
@@ -84,7 +123,7 @@ public:
 
         auto cnt = 0ull;
         auto recurse = [&,this](Shape<8> sh) {
-            auto &pcs = used_pieces[fast_canonical_form.at(sh)];
+            auto &pcs = used_pieces[fast_canonical_form[sh.get_value() % fast_canonical_form_mod]];
             if (pcs)
                 return false; // duplicate shape
             pcs = 1, n_used_pieces++;
