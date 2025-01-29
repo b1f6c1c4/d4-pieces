@@ -9,6 +9,8 @@
 #include <thread>
 #include <unordered_set>
 #include <unordered_map>
+#include <fcntl.h>
+#include <unistd.h>
 #include <sys/mman.h>
 #include <random>
 #include <mimalloc-new-delete.h>
@@ -111,7 +113,6 @@ public:
             });
             if (id) {
                 static_cast<Derived *>(this)->log(*id);
-                g_work_counter.fetch_add(1, std::memory_order_relaxed);
                 return 1;
             } else {
                 std::print("Warning: Naming rejected SearcherCRTP's plan\n");
@@ -182,8 +183,10 @@ struct AtomicCountSearcher : SearcherCRTP<AtomicCountSearcher> {
           ledger{ ptr } { }
 
     void log(uint64_t v) {
-        if (seen.insert(v).second)
-            ledger[v].fetch_add(1, std::memory_order_relaxed);
+        if (!seen.insert(v).second)
+            return;
+        ledger[v].fetch_add(1, std::memory_order_relaxed);
+        g_work_counter.fetch_add(1, std::memory_order_relaxed);
     }
 };
 
@@ -197,20 +200,109 @@ struct AtomicBitSearcher : SearcherCRTP<AtomicBitSearcher> {
     void log(uint64_t v) {
         auto stride = (width + 63) / 64;
         std::atomic_ref atm{ ledger[v * stride + id / 64] };
-        atm.fetch_or(1ull << (id % 64), std::memory_order_relaxed);
+        auto mask = 1ull << (id % 64);
+        if (!(atm.fetch_or(mask, std::memory_order_relaxed) & mask))
+            g_work_counter.fetch_add(1, std::memory_order_relaxed);
     }
 };
 
-struct FileByteSearcher : SearcherCRTP<FileByteSearcher> {
+struct FileSearcherBase {
+    static std::pair<int, unsigned char *> open(const char *fn, size_t sz) {
+        using namespace std::string_literals;
+        auto fd = ::open(fn, O_RDWR | O_CREAT | O_NOATIME,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+        if (fd == -1)
+            throw std::runtime_error{ "open(2): "s + std::strerror(errno) };
+        if (::lseek(fd, sz, SEEK_SET) == -1)
+            throw std::runtime_error{ "lseek(2): "s + std::strerror(errno) };
+        {
+            char buf{};
+            switch (::read(fd, &buf, 1)) {
+                case 1:
+                    break;
+                case -1:
+                    throw std::runtime_error{ "read(2): "s + std::strerror(errno) };
+                case 0:
+                    if (::write(fd, &buf, 1) != 1)
+                        throw std::runtime_error{ "write(2): "s + std::strerror(errno) };
+                    break;
+            }
+        }
+        if (::lseek(fd, 0, SEEK_SET) == -1)
+            throw std::runtime_error{ "lseek(2): "s + std::strerror(errno) };
+        auto mem = ::mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (mem == MAP_FAILED)
+            throw std::runtime_error{ "mmap(2): "s + std::strerror(errno) };
+        return { fd, reinterpret_cast<unsigned char *>(mem) };
+    }
+
+    static void close(int fd, unsigned char *mem, size_t sz) {
+        using namespace std::string_literals;
+        if (::munmap(mem, sz))
+            throw std::runtime_error{ "mmap(2): "s + std::strerror(errno) };
+        if (::close(fd))
+            throw std::runtime_error{ "close(2): "s + std::strerror(errno) };
+    }
+};
+
+struct FileByteSearcher : SearcherCRTP<FileByteSearcher>, private FileSearcherBase {
     unsigned char *ledger; // mmap(2)
     size_t id, width; // bytes
-    FileByteSearcher(size_t i, size_t w, const Naming &nm, unsigned s, void *ptr)
+    FileByteSearcher(size_t i, size_t w, const Naming &nm, unsigned s, unsigned char *ptr)
         : SearcherCRTP<FileByteSearcher>{ nm, s },
-          ledger{ reinterpret_cast<unsigned char *>(ptr) }, id{ i }, width{ w } { }
+          ledger{ ptr }, id{ i }, width{ w } { }
 
     void log(uint64_t v) {
-        ledger[v * width + id] = 0xff;
+        auto &l = ledger[v * width + id];
+        if (!l)
+            g_work_counter.fetch_add(1, std::memory_order_relaxed);
+        l = 0xff;
     }
+
+    static std::tuple<int, unsigned char *, size_t> open(const char *fn, size_t w, const Naming &nm) {
+        auto sz = w * nm.size();
+        auto [fd, mem] = FileSearcherBase::open(fn, sz);
+        return { fd, mem, sz };
+    }
+
+    using FileSearcherBase::close;
+};
+
+struct FileBitSearcher : SearcherCRTP<FileBitSearcher>, private FileSearcherBase {
+    unsigned char *ledger; // mmap(2)
+    size_t id, width; // bits
+    size_t mtxs_count;
+    std::mutex *mtxs;
+    // no copy no move
+    FileBitSearcher(size_t i, size_t w, const Naming &nm, unsigned s, unsigned char *ptr)
+        : SearcherCRTP<FileBitSearcher>{ nm, s },
+          ledger{ ptr }, id{ i }, width{ w }, mtxs_count{ 8 * boost::thread::hardware_concurrency() },
+          mtxs{ new std::mutex[mtxs_count]{} } { }
+    ~FileBitSearcher() {
+        if (mtxs) {
+            delete [] mtxs;
+            mtxs = nullptr;
+        }
+    }
+
+    void log(uint64_t v) {
+        auto index = v * (width + 7) / 8 + id / 8;
+        std::lock_guard lock{ mtxs[index % mtxs_count] };
+        auto &l = ledger[index];
+        auto mask = 1ull << (id % 8);
+        if (!(l & mask)) {
+            g_work_counter.fetch_add(1, std::memory_order_relaxed);
+            l |= mask;
+        }
+    }
+
+    static std::tuple<int, unsigned char *, size_t> open(const char *fn, size_t w, const Naming &nm) {
+        auto sz = (w + 7) / 8 * nm.size();
+        auto [fd, mem] = FileSearcherBase::open(fn, sz);
+        return { fd, mem, sz };
+    }
+
+    using FileSearcherBase::close;
 };
 
 template <typename T, size_t L, typename ... TArgs>
@@ -225,7 +317,7 @@ void run(Board<L> board, const Naming &nm, unsigned sym, TArgs && ... args) {
                         sh.to_string());
             }
             g_board_counter++;
-        }, i);
+        }, i++);
     });
     pool.close();
     pool.join();
@@ -238,9 +330,9 @@ std::jthread monitor(uint64_t bmax, uint64_t max) {
         while (!st.stop_requested()) {
             std::this_thread::sleep_for(1s);
             auto next = g_work_counter.load(std::memory_order_relaxed);
-            std::print("{}/{} board done, {} work done ({}Mipcs/s), {} maximum => {:0.6f}%\n",
+            std::print("{}/{} board done, {} work done ({}Kpcs/s), {} maximum => {:0.6f}%\n",
                     g_board_counter.load(), bmax,
-                    next, (next - old) / 1024.0 / 1024.0, max, 100.0 * next / max);
+                    next, (next - old) / 1000.0, max, 100.0 * next / max);
             old = next;
         }
     } };
@@ -268,10 +360,10 @@ int main(int argc, char *argv[]) {
     std::print("number of pieces combinations: {}\n", nm.size());
     std::print("total amount of work: {}\n", nm.size() * board.count);
     std::print("size to record pcsc only (ac): {} GiB\n", ::pow(2.0, -33) * nm.size() * 64);
-    std::print("size to record everything (ab): {} GiB\n", ::pow(2.0, -33) * nm.size() * board.count);
+    std::print("size to record everything (ab|fb): {} GiB\n", ::pow(2.0, -33) * nm.size() * board.count);
     std::print("size to record everything (fB): {} GiB\n", ::pow(2.0, -30) * nm.size() * board.count);
     if (::getenv("S") == nullptr) {
-        std::print("set env S to v|ac|ac|ab|fB\n");
+        std::print("set env S to v|ac|ac|ab|fb|fB\n");
         return 1;
     }
 
@@ -308,18 +400,18 @@ int main(int argc, char *argv[]) {
                 collect(i);
         }
         delete [] ptr;
-    } else if (::getenv("S") == "ac1"s) {
-        auto ptr = new std::atomic_size_t[nm.size()]{};
+    } else if (::getenv("S") == "fb"s) {
+        auto [fd, mem, sz] = FileBitSearcher::open(argv[5], board.count, nm);
         std::print("dispatching {} tasks\n", board.count);
-        AtomicCountSearcher(0, 0, nm, sym, ptr).step(board.base.clear(0,0).clear(3,3));
-        std::print("collecting {} results\n", board.count);
-        for (auto i = 0ull; i < nm.size(); i++) {
-            auto v = ptr[i].load(std::memory_order_relaxed);
-            best = std::max(best, v);
-            if (v == board.count)
-                collect(i);
-        }
-        delete [] ptr;
+        run<FileBitSearcher>(board, nm, sym, mem);
+        std::print("closing\n", board.count);
+        FileByteSearcher::close(fd, mem, sz);
+    } else if (::getenv("S") == "fB"s) {
+        auto [fd, mem, sz] = FileByteSearcher::open(argv[5], board.count, nm);
+        std::print("dispatching {} tasks\n", board.count);
+        run<FileByteSearcher>(board, nm, sym, mem);
+        std::print("closing\n", board.count);
+        FileByteSearcher::close(fd, mem, sz);
     }
 
     if (collected)
