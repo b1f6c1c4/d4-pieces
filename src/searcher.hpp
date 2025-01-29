@@ -37,7 +37,7 @@ protected:
           n_used_pieces{},
           used_pieces(g_nme->size_pieces(), 0) { }
 
-    virtual void log(uint64_t v) = 0;
+    virtual bool log(uint64_t v) = 0;
 };
 
 // g_nme and g_sym must be set
@@ -68,9 +68,11 @@ protected:
     virtual Searcher *make() = 0;
 
     // whether the i-th board config should run
-    virtual bool should_run(uint64_t i) { return true; }
+    [[nodiscard]] virtual bool should_run(uint64_t i, Shape<8> sh) { return true; }
 
     void incr_work(uint64_t diff = 1) {
         work_counter.fetch_add(diff, std::memory_order_relaxed);
     }
+
+    virtual void after_run(uint64_t i, Shape<8> sh, uint64_t cnt, uint64_t ms);
 };
