@@ -21,8 +21,20 @@ uint64_t Naming::binomial(uint64_t n, uint64_t m) {
     return cache[n][m];
 }
 
+std::pair<uint64_t, uint64_t> Naming::resolve_piece(uint64_t nm) const {
+    auto it = std::ranges::upper_bound(arr_sizes_cumsum, nm);
+    if (it == arr_sizes_cumsum.end())
+        return { 0, 0 };
+    auto id = it - arr_sizes_cumsum.begin();
+    if (!id)
+        return { min_m, nm };
+    return { min_m + id, nm - arr_sizes_cumsum[id - 1] };
+}
+
 Naming::Naming(uint64_t m, uint64_t M, uint64_t n, uint64_t N, uint64_t t, const uint64_t * const *a, const size_t *sz)
     : min_m{ m }, max_m{ M }, min_n{ n }, max_n{ N }, tgt{ t }, arr{ a }, arr_sizes{ sz } {
+    std::inclusive_scan(arr_sizes + min_m, arr_sizes + max_m + 1,
+            std::back_inserter(arr_sizes_cumsum));
 
     // find partitions
     V curr;

@@ -24,13 +24,15 @@
 #include "Shape.hpp"
 #include "naming.inl"
 
-std::unordered_map<Shape<8>, Shape<8>> fast_canonical_form;
+// Shape -> piece naming
+std::unordered_map<Shape<8>, uint64_t> fast_canonical_form;
 void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
+    fast_canonical_form.reserve(nm.size_pieces() * 8 * 8 * std::popcount(sym));
     auto count = 0zu;
-    auto push_translate = [](Shape<8> sh, Shape<8> t) {
+    auto push_translate = [](uint64_t nm, Shape<8> t) {
         for (auto row = 0u; row <= t.bottom(); row++)
             for (auto col = 0u; col <= t.right(); col++)
-                fast_canonical_form.emplace(t.translate_unsafe(col, row), sh);
+                fast_canonical_form.emplace(t.translate_unsafe(col, row), nm);
     };
     for (auto m = nm.min_m; m <= nm.max_m; m++) {
         for (auto i = 0zu; i < nm.arr_sizes[m]; i++) {
@@ -38,7 +40,7 @@ void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
             auto sh = Shape<8>(nm.arr[m][i]);
             for (auto s = sym; auto t : sh.transforms(true)) {
                 if (s & 1u)
-                    push_translate(sh, t);
+                    push_translate(nm.name_piece(m, i), t);
                 s >>= 1;
             }
         }
@@ -50,21 +52,23 @@ void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
 static std::atomic_uint64_t g_work_counter, g_board_counter;
 
 // NOT thread-safe at all!
+// DO NOT REUSE
 template <typename Derived, bool Shortcut = false>
 class SearcherCRTP {
     using set_t = boost::container::flat_set<Shape<8>::shape_t>;
     using sv_t = boost::container::small_vector<uint64_t, 24zu>;
     const Naming &nme;
     unsigned sym;
-    set_t used_pieces; // canonical forms
+    size_t n_used_pieces;
+    std::vector<char> used_pieces; // [nme.name_piece(m,i)] -> bool
 
 public:
     uint64_t step(Shape<8> empty_area) {
         if (!empty_area) {
-            if (used_pieces.size() < nme.min_n || used_pieces.size() > nme.max_n)
+            if (n_used_pieces < nme.min_n || n_used_pieces > nme.max_n)
                 return 0;
-            auto id = nme.name([this](uint64_t v){
-                return used_pieces.contains(v);
+            auto id = nme.name([this](uint64_t m, uint64_t i){
+                return !!used_pieces[nme.name_piece(m, i)];
             });
             if (id) {
                 static_cast<Derived *>(this)->log(*id);
@@ -75,19 +79,18 @@ public:
                 return 0;
             }
         }
-        if (used_pieces.size() == nme.max_n)
+        if (n_used_pieces == nme.max_n)
             return 0;
 
         auto cnt = 0ull;
         auto recurse = [&,this](Shape<8> sh) {
-            auto can = fast_canonical_form.at(sh);
-            if (!used_pieces.insert(can.get_value()).second)
+            auto &pcs = used_pieces[fast_canonical_form.at(sh)];
+            if (pcs)
                 return false; // duplicate shape
+            pcs = 1, n_used_pieces++;
             cnt += step(empty_area - sh);
-            if (cnt && Shortcut)
-                return true;
-            used_pieces.erase(can.get_value());
-            return false;
+            pcs = 0, n_used_pieces--;
+            return cnt && Shortcut;
         };
         // all possible shapes of size m covering front()
         sv_t shapes{ empty_area.front_shape().get_value() };
@@ -120,9 +123,9 @@ public:
     }
 
 protected:
-    SearcherCRTP(const Naming &nm, unsigned s) : nme{ nm }, sym{ s } {
-        used_pieces.reserve(nm.max_n);
-    }
+    SearcherCRTP(const Naming &nm, unsigned s)
+        : nme{ nm }, sym{ s },
+          n_used_pieces{}, used_pieces(nm.size_pieces(), 0) { }
 };
 
 struct VerifySearcher : SearcherCRTP<VerifySearcher, true> {
@@ -176,7 +179,7 @@ void run(Board<L> board, const Naming &nm, unsigned sym, TArgs && ... args) {
     g_board_counter = 0;
     boost::basic_thread_pool pool;
     board.foreach([&,i=0zu](Shape<8> sh) mutable {
-        boost::async(pool, [&](size_t ii) {
+        boost::async(pool, [&,sh](size_t ii) {
             auto cnt = T(ii, board.count, nm, sym, std::forward<TArgs>(args)...).step(sh);
             if (!cnt) {
                 std::print("########### ERROR: a board with ZERO cnt found\n{}#######################\n",
@@ -237,8 +240,8 @@ int main(int argc, char *argv[]) {
     auto collect = [&](uint64_t i) {
         collected++;
         std::vector<uint64_t> res;
-        nm.resolve(i, [&](uint64_t v) {
-            res.push_back(v);
+        nm.resolve(i, [&](uint64_t m, uint64_t i) {
+            res.push_back(nm.arr[m][i]);
         });
         auto sz = res.size();
         ::write(4, &sz, sizeof(sz));
@@ -258,6 +261,18 @@ int main(int argc, char *argv[]) {
         auto ptr = new std::atomic_size_t[nm.size()]{};
         std::print("dispatching {} tasks\n", board.count);
         run<AtomicCountSearcher>(board, nm, sym, ptr);
+        std::print("collecting {} results\n", board.count);
+        for (auto i = 0ull; i < nm.size(); i++) {
+            auto v = ptr[i].load(std::memory_order_relaxed);
+            best = std::max(best, v);
+            if (v == board.count)
+                collect(i);
+        }
+        delete [] ptr;
+    } else if (::getenv("S") == "ac1"s) {
+        auto ptr = new std::atomic_size_t[nm.size()]{};
+        std::print("dispatching {} tasks\n", board.count);
+        AtomicCountSearcher(0, 0, nm, sym, ptr).step(board.base.clear(0,0).clear(3,3));
         std::print("collecting {} results\n", board.count);
         for (auto i = 0ull; i < nm.size(); i++) {
             auto v = ptr[i].load(std::memory_order_relaxed);

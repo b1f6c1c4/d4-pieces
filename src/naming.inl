@@ -7,7 +7,7 @@ std::optional<uint64_t> Naming::name(auto &&func) const {
     V partition(max_m - min_m + 1, 0);
     for (auto m = min_m; m <= max_m; m++) {
         for (auto i = 0zu; i < arr_sizes[m]; i++) {
-            if (func(arr[m][i])) { // i was chosen
+            if (func(m, i)) { // i was chosen
                 partition[m - min_m]++;
             }
         }
@@ -32,7 +32,7 @@ uint64_t Naming::name_binomial(auto &&func, uint64_t k, uint64_t m) const {
     auto sz = arr_sizes[m];
     auto nm = 0ull;
     for (auto i = 0zu; k; i++) {
-        if (func(arr[m][i])) { // i was chosen
+        if (func(m, i)) { // i was chosen
             k--;
         } else { // i was not chosen
             // compensate for the names on the 'taken' path
@@ -48,7 +48,7 @@ void Naming::resolve_binomial(auto &&func, uint64_t k, uint64_t m, uint64_t nm) 
     for (auto i = 0zu; k; i++) {
         auto mid = binomial(sz - 1, k - 1);
         if (nm < mid) { // i was chosen
-            func(arr[m][i]);
+            func(m, i);
             k--;
         } else { // i was not chosen
             // skip for the names on the 'taken' path
