@@ -36,7 +36,11 @@ if(EMSCRIPTEN)
     target_link_options(profile PRIVATE -sENVIRONMENT=shell)
     target_link_options(profile PRIVATE -sMODULARIZE=0)
 else()
-    add_executable(search src/search.cpp src/Piece.cpp src/Shape.cpp src/Group.cpp src/known.cpp)
+    add_executable(search
+        src/search.cpp
+        src/naming.cpp
+        src/Piece.cpp src/Shape.cpp src/Group.cpp
+        src/known1.cpp src/known2.cpp)
     target_compile_options(search PRIVATE -g -O3)
     target_link_libraries(search PRIVATE boost_thread)
     target_link_libraries(search PRIVATE mimalloc)
