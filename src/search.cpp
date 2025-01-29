@@ -93,9 +93,12 @@ public:
             next.reserve(4 * shapes.size());
             for (auto shv : shapes) {
                 Shape<8> sh{ shv };
-                for (auto pos : (sh.extend1() & empty_area) - sh) {
-                    next.push_back(sh.set(pos).get_value());
-                }
+                // the following is equivalent to this, but is faster:
+                //   for (auto pos : (sh.extend1() & empty_area) - sh)
+                //       next.push_back(sh.set(pos).get_value());
+                auto ex = (sh.extend1() & empty_area) - sh;
+                for (auto v = ex.get_value(); v; v -= (v & -v)) [[likely]]
+                    next.push_back(shv | (v & -v));
             }
             if (next.empty())
                 break;
