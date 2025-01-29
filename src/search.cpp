@@ -1,8 +1,12 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <iostream>
 #include <print>
 #include <cstdlib>
+#include <stdexcept>
+#include <stop_token>
+#include <thread>
 #include <unordered_set>
 #include <sys/mman.h>
 #include <mimalloc-new-delete.h>
@@ -17,6 +21,31 @@
 #include "Shape.hpp"
 #include "naming.inl"
 
+std::unordered_map<Shape<8>, Shape<8>> fast_canonical_form;
+void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
+    auto count = 0zu;
+    auto push_translate = [](Shape<8> sh, Shape<8> t) {
+        for (auto row = 0u; row <= t.bottom(); row++)
+            for (auto col = 0u; col <= t.right(); col++)
+                fast_canonical_form.emplace(t.translate_unsafe(col, row), sh);
+    };
+    for (auto m = nm.min_m; m <= nm.max_m; m++) {
+        for (auto i = 0zu; i < nm.arr_sizes[m]; i++) {
+            count++;
+            auto sh = Shape<8>(nm.arr[m][i]);
+            for (auto s = sym; auto t : sh.transforms(true)) {
+                if (s & 1u)
+                    push_translate(sh, t);
+                s >>= 1;
+            }
+        }
+    }
+    std::print("cached {} => {} canonical forms\n",
+            fast_canonical_form.size(), count);
+}
+
+static std::atomic_uint64_t g_work_counter;
+
 // NOT thread-safe at all!
 template <typename Derived>
 class SearcherCRTP {
@@ -29,31 +58,41 @@ public:
         if (!empty_area) {
             if (used_pieces.size() < nme.min_n || used_pieces.size() > nme.max_n)
                 return;
-            if (auto id = nme.name([this](uint64_t v){
-                    return used_pieces.contains(Shape<8>{ v });
-                }); id)
+            auto id = nme.name([this](uint64_t v){
+                return used_pieces.contains(Shape<8>{ v });
+            });
+            if (id) {
                 static_cast<Derived *>(this)->log(*id);
+                g_work_counter.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                std::print("Warning: Naming rejected SearcherCRTP's plan\n");
+            }
             return;
         }
 
         auto recurse = [&,this](Shape<8> sh) {
-            sh = sh.canonical_form(sym);
-            if (!used_pieces.insert(sh).second)
+            auto can = fast_canonical_form.at(sh);
+            if (!used_pieces.insert(can).second)
                 return; // duplicate shape
             step(empty_area - sh);
-            used_pieces.erase(sh);
+            used_pieces.erase(can);
         };
         // all possible shapes of size m covering front()
         std::unordered_set<Shape<8>> shapes{ empty_area.front_shape() };
         if (1u >= nme.min_m)
             recurse(empty_area.front_shape());
-        for (auto m = 1u; m <= nme.max_m; m++) {
+        for (auto m = 1u; m < nme.max_m; m++) {
             std::unordered_set<Shape<8>> next;
-            for (auto sh : shapes)
-                for (auto pos : (sh.extend1() & empty_area) - sh)
+            for (auto sh : shapes) {
+                for (auto pos : (sh.extend1() & empty_area) - sh) {
                     next.insert(sh.set(pos));
-            for (auto sh : next)
-                recurse(sh);
+                }
+            }
+            if (next.empty())
+                break;
+            if (m + 1 >= nme.min_m)
+                for (auto sh : next)
+                    recurse(sh);
             shapes = std::move(next);
         }
     }
@@ -111,6 +150,20 @@ void run(Board<L> board, const Naming &nm, unsigned sym, TArgs && ... args) {
     pool.join();
 };
 
+std::jthread monitor(std::stop_token st, uint64_t max) {
+    using namespace std::chrono_literals;
+    return std::jthread{ [&] {
+        auto old = 0ull;
+        while (!st.stop_requested()) {
+            std::this_thread::sleep_for(1s);
+            auto next = g_work_counter.load(std::memory_order_relaxed);
+            std::print("{} done ({}Mipcs/s), {} maximum => {:0.6f}%\n",
+                    next, (next - old) / 1024.0 / 1024.0, max, 100.0 * next / max);
+            old = next;
+        }
+    } };
+}
+
 int main(int argc, char *argv[]) {
     using namespace std::string_literals;
 
@@ -148,22 +201,47 @@ int main(int argc, char *argv[]) {
             res.push_back(v);
         });
         auto sz = res.size();
-        ::write(3, &sz, sizeof(sz));
-        ::write(3, res.data(), sz * sizeof(uint64_t));
+        ::write(4, &sz, sizeof(sz));
+        ::write(4, res.data(), sz * sizeof(uint64_t));
     };
 
+    compute_fast_canonical_form(nm, sym);
+
+    std::stop_source stop;
+    auto j = monitor(stop.get_token(), nm.size() * board.count);
+
+    auto best = 0zu;
     if (::getenv("S") == "ac"s) {
         auto ptr = new std::atomic_size_t[nm.size()];
         std::print("dispatching {} tasks\n", board.count);
         run<AtomicCountSearcher>(board, nm, sym, ptr);
         std::print("collecting {} results\n", board.count);
         for (auto i = 0ull; i < nm.size(); i++) {
-            if (ptr[i].load(std::memory_order_relaxed) == board.count)
+            auto v = ptr[i].load(std::memory_order_relaxed);
+            best = std::max(best, v);
+            if (v == board.count)
+                collect(i);
+        }
+        delete [] ptr;
+    } else if (::getenv("S") == "ac1"s) {
+        auto ptr = new std::atomic_size_t[nm.size()];
+        std::print("dispatching {} tasks\n", board.count);
+        AtomicCountSearcher(0, 0, nm, sym, ptr).step(board.base.clear(0, 0).clear(3, 3));
+        std::print("collecting {} results\n", board.count);
+        for (auto i = 0ull; i < nm.size(); i++) {
+            auto v = ptr[i].load(std::memory_order_relaxed);
+            best = std::max(best, v);
+            if (v == board.count)
                 collect(i);
         }
         delete [] ptr;
     }
+    stop.request_stop();
 
-    std::print("found {}/{} usable results that passed all {} configs!\n",
-            collected, nm.size(), board.count);
+    if (collected)
+        std::print("found {}/{} usable results that passed all {} configs!\n",
+                collected, nm.size(), board.count);
+    else
+        std::print("no usable result found from {}, the best could pass {}/{} configs\n",
+                nm.size(), best, board.count);
 }
