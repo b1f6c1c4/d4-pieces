@@ -50,7 +50,7 @@ void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
 static std::atomic_uint64_t g_work_counter, g_board_counter;
 
 // NOT thread-safe at all!
-template <typename Derived>
+template <typename Derived, bool Shortcut = false>
 class SearcherCRTP {
     using set_t = boost::container::flat_set<Shape<8>::shape_t>;
     using sv_t = boost::container::small_vector<uint64_t, 24zu>;
@@ -59,35 +59,41 @@ class SearcherCRTP {
     set_t used_pieces; // canonical forms
 
 public:
-    void step(Shape<8> empty_area) {
+    uint64_t step(Shape<8> empty_area) {
         if (!empty_area) {
             if (used_pieces.size() < nme.min_n || used_pieces.size() > nme.max_n)
-                return;
+                return 0;
             auto id = nme.name([this](uint64_t v){
                 return used_pieces.contains(v);
             });
             if (id) {
                 static_cast<Derived *>(this)->log(*id);
                 g_work_counter.fetch_add(1, std::memory_order_relaxed);
+                return 1;
             } else {
                 std::print("Warning: Naming rejected SearcherCRTP's plan\n");
+                return 0;
             }
-            return;
         }
         if (used_pieces.size() == nme.max_n)
-            return;
+            return 0;
 
+        auto cnt = 0ull;
         auto recurse = [&,this](Shape<8> sh) {
             auto can = fast_canonical_form.at(sh);
             if (!used_pieces.insert(can.get_value()).second)
-                return; // duplicate shape
-            step(empty_area - sh);
+                return false; // duplicate shape
+            cnt += step(empty_area - sh);
+            if (cnt && Shortcut)
+                return true;
             used_pieces.erase(can.get_value());
+            return false;
         };
         // all possible shapes of size m covering front()
         sv_t shapes{ empty_area.front_shape().get_value() };
         if (1u >= nme.min_m)
-            recurse(empty_area.front_shape());
+            if (recurse(empty_area.front_shape()))
+                return cnt;
         for (auto m = 1u; m < nme.max_m; m++) {
             sv_t next;
             next.reserve(4 * shapes.size());
@@ -106,15 +112,24 @@ public:
             next.erase(std::ranges::unique(next).begin(), next.end());
             if (m + 1 >= nme.min_m)
                 for (auto sh : next)
-                    recurse(Shape<8>{ sh });
+                    if (recurse(Shape<8>{ sh }))
+                        return cnt;
             shapes = std::move(next);
         }
+        return cnt;
     }
 
 protected:
     SearcherCRTP(const Naming &nm, unsigned s) : nme{ nm }, sym{ s } {
         used_pieces.reserve(nm.max_n);
     }
+};
+
+struct VerifySearcher : SearcherCRTP<VerifySearcher, true> {
+    VerifySearcher(size_t, size_t, const Naming &nm, unsigned s)
+        : SearcherCRTP<VerifySearcher, true>{ nm, s } { }
+
+    void log(uint64_t v) { }
 };
 
 struct AtomicCountSearcher : SearcherCRTP<AtomicCountSearcher> {
@@ -158,10 +173,15 @@ struct FileByteSearcher : SearcherCRTP<FileByteSearcher> {
 
 template <typename T, size_t L, typename ... TArgs>
 void run(Board<L> board, const Naming &nm, unsigned sym, TArgs && ... args) {
+    g_board_counter = 0;
     boost::basic_thread_pool pool;
     board.foreach([&,i=0zu](Shape<8> sh) mutable {
         boost::async(pool, [&](size_t ii) {
-            T(ii, board.count, nm, sym, std::forward<TArgs>(args)...).step(sh);
+            auto cnt = T(ii, board.count, nm, sym, std::forward<TArgs>(args)...).step(sh);
+            if (!cnt) {
+                std::print("########### ERROR: a board with ZERO cnt found\n{}#######################\n",
+                        sh.to_string());
+            }
             g_board_counter++;
         }, i);
     });
@@ -209,7 +229,7 @@ int main(int argc, char *argv[]) {
     std::print("size to record everything (ab): {} GiB\n", ::pow(2.0, -33) * nm.size() * board.count);
     std::print("size to record everything (fB): {} GiB\n", ::pow(2.0, -30) * nm.size() * board.count);
     if (::getenv("S") == nullptr) {
-        std::print("set env S to ac|ab|fB\n");
+        std::print("set env S to v|ac|ac|ab|fB\n");
         return 1;
     }
 
@@ -231,22 +251,13 @@ int main(int argc, char *argv[]) {
     auto j = monitor(board.count, nm.size() * board.count);
 
     auto best = 0zu;
-    if (::getenv("S") == "ac"s) {
+    if (::getenv("S") == "v"s) {
+        std::print("dispatching {} scanning tasks\n", board.count);
+        run<VerifySearcher>(board, nm, sym);
+    } else if (::getenv("S") == "ac"s) {
         auto ptr = new std::atomic_size_t[nm.size()]{};
         std::print("dispatching {} tasks\n", board.count);
         run<AtomicCountSearcher>(board, nm, sym, ptr);
-        std::print("collecting {} results\n", board.count);
-        for (auto i = 0ull; i < nm.size(); i++) {
-            auto v = ptr[i].load(std::memory_order_relaxed);
-            best = std::max(best, v);
-            if (v == board.count)
-                collect(i);
-        }
-        delete [] ptr;
-    } else if (::getenv("S") == "ac1"s) {
-        auto ptr = new std::atomic_size_t[nm.size()]{};
-        std::print("dispatching {} tasks\n", board.count);
-        AtomicCountSearcher(0, 0, nm, sym, ptr).step(board.base.clear(0, 0).clear(3, 3));
         std::print("collecting {} results\n", board.count);
         for (auto i = 0ull; i < nm.size(); i++) {
             auto v = ptr[i].load(std::memory_order_relaxed);
