@@ -1,20 +1,19 @@
 #include <atomic>
-#include <cmath>
-#include <cstdint>
-#include <iostream>
-#include <print>
-#include <cstdlib>
-#include <stdexcept>
-#include <cstring>
-#include <stop_token>
-#include <thread>
-#include <unordered_set>
-#include <unordered_map>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/mman.h>
-
 #include <boost/thread/scoped_thread.hpp>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <iostream>
+#include <mimalloc-new-delete.h>
+#include <print>
+#include <stdexcept>
+#include <stop_token>
+#include <sys/mman.h>
+#include <thread>
+#include <unistd.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "board.hpp"
 #include "searcher.hpp"
@@ -25,8 +24,9 @@ struct Verify : SearcherFactory {
     struct S : Searcher {
         Verify &parent;
         explicit S(Verify &p) : Searcher{ true }, parent{ p } { }
-        void log(uint64_t) override {
+        bool log(uint64_t) override {
             parent.incr_work();
+            return true;
         }
     };
     Searcher *make() override { return new S{ *this }; };
@@ -38,72 +38,123 @@ struct AtomicCount : SearcherFactory {
         AtomicCount &parent;
         std::unordered_set<uint64_t> seen;
         explicit S(AtomicCount &p) : parent{ p } { }
-        void log(uint64_t v) override {
+        bool log(uint64_t v) override {
             if (!seen.insert(v).second)
-                return;
+                return false;
             parent.ledger[v].fetch_add(1, std::memory_order_relaxed);
+            return true;
         }
     };
     Searcher *make() override { return new S{ *this }; };
     static uint64_t size() {
-        return g_nme->size() * sizeof(std::atomic_size_t) / 8;
+        return g_nme->size() * sizeof(std::atomic_size_t);
     }
 };
 
 struct FileSearcherBase : SearcherFactory {
     int fd;
-    unsigned char *mem;
+
+    struct config_descriptor {
+        uint64_t shape;
+        uint64_t count; // number of times Searcher::log returns true
+        uint64_t solved; // if == 0, unsolved
+                         // if > 0, milliseconds spent on solving it
+        uint64_t padding;
+    };
+    static_assert(sizeof(config_descriptor) == 32);
+
+    // file structure:
+    // config_descriptor[g_board->count]
+    // sz bytes of ledger
+
+    config_descriptor *cfgs;
+    unsigned char *ledger;
     size_t mem_sz;
 
-    FileSearcherBase(const char *fn, size_t sz) : fd{ -1 }, mem{}, mem_sz{ sz } {
+    FileSearcherBase(const char *fn, size_t w)
+        : fd{ -1 }, cfgs{}, ledger{},
+          mem_sz{ g_board->count * sizeof(config_descriptor) + g_nme->size() * w } {
+        std::print("file sizing:\n  - header: {} x {} = {} B\n  - ledger: {} x {} = {} B\ntotal: {} B\n",
+            g_board->count, sizeof(config_descriptor), g_board->count * sizeof(config_descriptor),
+            g_nme->size(), w, g_nme->size() * w,
+            mem_sz);
         using namespace std::string_literals;
         fd = ::open(fn, O_RDWR | O_CREAT | O_NOATIME,
                 S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
         if (fd == -1)
             throw std::runtime_error{ "open(2): "s + std::strerror(errno) };
-        if (::lseek(fd, sz, SEEK_SET) == -1)
-            throw std::runtime_error{ "lseek(2): "s + std::strerror(errno) };
-        { // ensure file is at least sz long
+        auto operate_at = [&](bool w, uint64_t pos) {
+            if (::lseek(fd, pos, SEEK_SET) == -1)
+                throw std::runtime_error{ "lseek(2): "s + std::strerror(errno) };
             char buf{};
-            switch (::read(fd, &buf, 1)) {
+            switch (w ? ::write(fd, &buf, 1) : ::read(fd, &buf, 1)) {
                 case 1:
-                    break;
-                case -1:
-                    throw std::runtime_error{ "read(2): "s + std::strerror(errno) };
+                    return true;
                 case 0:
-                    if (::write(fd, &buf, 1) != 1)
-                        throw std::runtime_error{ "write(2): "s + std::strerror(errno) };
-                    break;
+                    return false;
+                case -1:
+                default:
+                    throw std::runtime_error{ (w ? "write(2): "s : "read(2): "s) + std::strerror(errno) };
             }
-        }
-        if (::lseek(fd, 0, SEEK_SET) == -1)
-            throw std::runtime_error{ "lseek(2): "s + std::strerror(errno) };
-        auto m = ::mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        };
+        if (operate_at(false, mem_sz))
+            throw std::runtime_error{ "file too long" };
+        if (operate_at(false, 0) && !operate_at(false, mem_sz - 1))
+            throw std::runtime_error{ "file too short" };
+        if (!operate_at(false, 0)) // pad to mem_sz
+            operate_at(true, mem_sz - 1);
+        operate_at(false, 0);
+        auto m = ::mmap(nullptr, mem_sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED)
             throw std::runtime_error{ "mmap(2): "s + std::strerror(errno) };
-        mem = reinterpret_cast<unsigned char *>(m);
+        cfgs = reinterpret_cast<config_descriptor *>(m);
+        ledger = reinterpret_cast<unsigned char *>(m) + g_board->count * sizeof(config_descriptor);
+        auto total = 0ull;
+        auto num = 0ull;
+        for (auto i = 0ull; i < g_board->count; i++)
+            if (cfgs[i].solved)
+                total += cfgs[i].solved, num++;
+        if (num)
+            std::print("{}/{} configs were previous solved, avg. {}s per config\n",
+                    num, g_board->count, 0.001 * total / num);
+        else
+            std::print("all {} configs were unsolved\n", g_board->count);
     }
 
     ~FileSearcherBase() noexcept {
         using namespace std::string_literals;
-        if (mem && ::munmap(mem, mem_sz))
+        if (cfgs && ::munmap(cfgs, mem_sz))
             std::print("mmap(2): {}", std::strerror(errno));
         if (fd != -1 && ::close(fd))
             std::print("close(2): {}", std::strerror(errno));
+    }
+
+    bool should_run(uint64_t i, Shape<8> sh) override {
+        cfgs[i].shape = sh.get_value();
+        return !cfgs[i].solved;
+    }
+
+    void after_run(uint64_t i, Shape<8> sh, uint64_t cnt, uint64_t ms) override {
+        SearcherFactory::after_run(i, sh, cnt, ms);
+        cfgs[i].count = cnt;
+        cfgs[i].solved = ms;
     }
 };
 
 struct FileByte : FileSearcherBase {
     FileByte(const char *fn)
-        : FileSearcherBase{ fn, g_nme->size() * g_board->count } { }
+        : FileSearcherBase{ fn, g_board->count } { }
     struct S : Searcher {
         FileByte &parent;
         explicit S(FileByte &p) : parent{ p } { }
-        void log(uint64_t v) {
-            auto &l = parent.mem[v * g_board->count + config_index];
-            if (!l)
+        bool log(uint64_t v) {
+            auto &l = parent.ledger[v * g_board->count + config_index];
+            if (!l) {
                 parent.incr_work();
-            l = 0xff;
+                l = 0xff;
+                return true;
+            }
+            return false;
         }
     };
     Searcher *make() override { return new S{ *this }; };
@@ -117,7 +168,7 @@ struct FileBit : FileSearcherBase {
     std::mutex *mtxs;
     // no copy no move
     FileBit(const char *fn)
-        : FileSearcherBase{ fn, g_nme->size() * (g_board->count + 7) / 8 },
+        : FileSearcherBase{ fn, (g_board->count + 7) / 8 },
           mtxs_count{ 8 * boost::thread::hardware_concurrency() },
           mtxs{ new std::mutex[mtxs_count]{} } { }
     ~FileBit() {
@@ -129,20 +180,22 @@ struct FileBit : FileSearcherBase {
     struct S : Searcher {
         FileBit &parent;
         explicit S(FileBit &p) : parent{ p } { }
-        void log(uint64_t v) {
-            auto index = v * (g_board->count + 7) / 8 + config_index / 8;
+        bool log(uint64_t v) {
+            auto index = v * ((g_board->count + 7) / 8) + config_index / 8;
             auto mask = 1ull << (config_index % 8);
             std::lock_guard lock{ parent.mtxs[index % parent.mtxs_count] };
-            auto &l = parent.mem[index];
+            auto &l = parent.ledger[index];
             if (!(l & mask)) {
                 parent.incr_work();
                 l |= mask;
+                return true;
             }
+            return false;
         }
     };
     Searcher *make() override { return new S{ *this }; };
     static uint64_t size() {
-        return g_nme->size() * (g_board->count + 7) / 8;
+        return g_nme->size() * ((g_board->count + 7) / 8);
     }
 };
 
@@ -253,7 +306,9 @@ int main(int argc, char *argv[]) {
                 nm.size(), best, board.count);
                 */
 
-    auto j = monitor(*sf);
-    sf->run();
+    {
+        auto j = monitor(*sf);
+        sf->run();
+    }
     delete sf;
 }

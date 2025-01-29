@@ -1,5 +1,6 @@
 #include "searcher.hpp"
 
+#include <chrono>
 #include <print>
 
 #define BOOST_THREAD_VERSION 5
@@ -86,8 +87,7 @@ uint64_t Searcher::step(Shape<8> empty_area) {
             return !!used_pieces[g_nme->name_piece(m, i)];
         });
         if (id) {
-            log(*id);
-            return 1;
+            return log(*id);
         } else {
             std::print("Warning: Naming rejected SearcherCRTP's plan\n");
             return 0;
@@ -139,16 +139,16 @@ uint64_t Searcher::step(Shape<8> empty_area) {
 void SearcherFactory::run() {
     boost::basic_thread_pool pool;
     g_board->foreach([&,i=0](Shape<8> sh) mutable {
-        if (should_run(i)) {
+        if (should_run(i, sh)) {
             boost::async(pool, [&,i,sh] {
                 auto *obj = make();
                 obj->config_index = i;
+                auto t1 = std::chrono::steady_clock::now();
                 auto cnt = obj->step(sh);
-                if (!cnt) {
-                    std::print("########### ERROR: a board with ZERO cnt found\n{}#######################\n",
-                            sh.to_string());
-                }
+                auto t2 = std::chrono::steady_clock::now();
                 delete obj;
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+                after_run(i, sh, cnt, ms);
                 configs_counter.fetch_add(1, std::memory_order_relaxed);
             });
             configs_issue_counter++;
@@ -158,3 +158,10 @@ void SearcherFactory::run() {
     pool.close();
     pool.join();
 };
+
+void SearcherFactory::after_run(uint64_t i, Shape<8> sh, uint64_t cnt, uint64_t ms) {
+    if (!cnt) {
+        std::print("########### ERROR: a board with ZERO cnt found\n{}#######################\n",
+                sh.to_string());
+    }
+}
