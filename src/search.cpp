@@ -8,12 +8,15 @@
 #include <stop_token>
 #include <thread>
 #include <unordered_set>
+#include <unordered_map>
 #include <sys/mman.h>
 #include <mimalloc-new-delete.h>
 
 #define BOOST_THREAD_VERSION 5
 #include <boost/thread/executors/basic_thread_pool.hpp>
 #include <boost/thread/future.hpp>
+#include <boost/container/flat_set.hpp>
+#include <boost/container/small_vector.hpp>
 
 #include "board.hpp"
 #include "naming.hpp"
@@ -44,14 +47,16 @@ void compute_fast_canonical_form(const Naming &nm, unsigned sym) {
             fast_canonical_form.size(), count);
 }
 
-static std::atomic_uint64_t g_work_counter;
+static std::atomic_uint64_t g_work_counter, g_board_counter;
 
 // NOT thread-safe at all!
 template <typename Derived>
 class SearcherCRTP {
+    using set_t = boost::container::flat_set<Shape<8>::shape_t>;
+    using sv_t = boost::container::small_vector<uint64_t, 24zu>;
     const Naming &nme;
     unsigned sym;
-    std::unordered_set<Shape<8>> used_pieces; // canonical forms
+    set_t used_pieces; // canonical forms
 
 public:
     void step(Shape<8> empty_area) {
@@ -59,7 +64,7 @@ public:
             if (used_pieces.size() < nme.min_n || used_pieces.size() > nme.max_n)
                 return;
             auto id = nme.name([this](uint64_t v){
-                return used_pieces.contains(Shape<8>{ v });
+                return used_pieces.contains(v);
             });
             if (id) {
                 static_cast<Derived *>(this)->log(*id);
@@ -69,46 +74,56 @@ public:
             }
             return;
         }
+        if (used_pieces.size() == nme.max_n)
+            return;
 
         auto recurse = [&,this](Shape<8> sh) {
             auto can = fast_canonical_form.at(sh);
-            if (!used_pieces.insert(can).second)
+            if (!used_pieces.insert(can.get_value()).second)
                 return; // duplicate shape
             step(empty_area - sh);
-            used_pieces.erase(can);
+            used_pieces.erase(can.get_value());
         };
         // all possible shapes of size m covering front()
-        std::unordered_set<Shape<8>> shapes{ empty_area.front_shape() };
+        sv_t shapes{ empty_area.front_shape().get_value() };
         if (1u >= nme.min_m)
             recurse(empty_area.front_shape());
         for (auto m = 1u; m < nme.max_m; m++) {
-            std::unordered_set<Shape<8>> next;
-            for (auto sh : shapes) {
+            sv_t next;
+            next.reserve(4 * shapes.size());
+            for (auto shv : shapes) {
+                Shape<8> sh{ shv };
                 for (auto pos : (sh.extend1() & empty_area) - sh) {
-                    next.insert(sh.set(pos));
+                    next.push_back(sh.set(pos).get_value());
                 }
             }
             if (next.empty())
                 break;
+            std::ranges::sort(next);
+            next.erase(std::ranges::unique(next).begin(), next.end());
             if (m + 1 >= nme.min_m)
                 for (auto sh : next)
-                    recurse(sh);
+                    recurse(Shape<8>{ sh });
             shapes = std::move(next);
         }
     }
 
 protected:
-    SearcherCRTP(const Naming &nm, unsigned s) : nme{ nm }, sym{ s } { }
+    SearcherCRTP(const Naming &nm, unsigned s) : nme{ nm }, sym{ s } {
+        used_pieces.reserve(nm.max_n);
+    }
 };
 
 struct AtomicCountSearcher : SearcherCRTP<AtomicCountSearcher> {
     std::atomic_size_t *ledger;
+    std::unordered_set<uint64_t> seen;
     AtomicCountSearcher(size_t, size_t, const Naming &nm, unsigned s, std::atomic_size_t *ptr)
         : SearcherCRTP<AtomicCountSearcher>{ nm, s },
           ledger{ ptr } { }
 
     void log(uint64_t v) {
-        ledger[v].fetch_add(1, std::memory_order_relaxed);
+        if (seen.insert(v).second)
+            ledger[v].fetch_add(1, std::memory_order_relaxed);
     }
 };
 
@@ -144,20 +159,22 @@ void run(Board<L> board, const Naming &nm, unsigned sym, TArgs && ... args) {
     board.foreach([&,i=0zu](Shape<8> sh) mutable {
         boost::async(pool, [&](size_t ii) {
             T(ii, board.count, nm, sym, std::forward<TArgs>(args)...).step(sh);
+            g_board_counter++;
         }, i);
     });
     pool.close();
     pool.join();
 };
 
-std::jthread monitor(std::stop_token st, uint64_t max) {
+std::jthread monitor(uint64_t bmax, uint64_t max) {
     using namespace std::chrono_literals;
-    return std::jthread{ [&] {
+    return std::jthread{ [=](std::stop_token st) {
         auto old = 0ull;
         while (!st.stop_requested()) {
             std::this_thread::sleep_for(1s);
             auto next = g_work_counter.load(std::memory_order_relaxed);
-            std::print("{} done ({}Mipcs/s), {} maximum => {:0.6f}%\n",
+            std::print("{}/{} board done, {} work done ({}Mipcs/s), {} maximum => {:0.6f}%\n",
+                    g_board_counter.load(), bmax,
                     next, (next - old) / 1024.0 / 1024.0, max, 100.0 * next / max);
             old = next;
         }
@@ -208,11 +225,11 @@ int main(int argc, char *argv[]) {
     compute_fast_canonical_form(nm, sym);
 
     std::stop_source stop;
-    auto j = monitor(stop.get_token(), nm.size() * board.count);
+    auto j = monitor(board.count, nm.size() * board.count);
 
     auto best = 0zu;
     if (::getenv("S") == "ac"s) {
-        auto ptr = new std::atomic_size_t[nm.size()];
+        auto ptr = new std::atomic_size_t[nm.size()]{};
         std::print("dispatching {} tasks\n", board.count);
         run<AtomicCountSearcher>(board, nm, sym, ptr);
         std::print("collecting {} results\n", board.count);
@@ -224,7 +241,7 @@ int main(int argc, char *argv[]) {
         }
         delete [] ptr;
     } else if (::getenv("S") == "ac1"s) {
-        auto ptr = new std::atomic_size_t[nm.size()];
+        auto ptr = new std::atomic_size_t[nm.size()]{};
         std::print("dispatching {} tasks\n", board.count);
         AtomicCountSearcher(0, 0, nm, sym, ptr).step(board.base.clear(0, 0).clear(3, 3));
         std::print("collecting {} results\n", board.count);
@@ -236,7 +253,6 @@ int main(int argc, char *argv[]) {
         }
         delete [] ptr;
     }
-    stop.request_stop();
 
     if (collected)
         std::print("found {}/{} usable results that passed all {} configs!\n",
