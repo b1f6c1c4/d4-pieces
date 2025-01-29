@@ -1,14 +1,16 @@
 #pragma once
 
 #include "Shape.hpp"
+#include <cstdint>
+#include <cstddef>
 
-extern size_t shape_count(size_t n);
-extern size_t shape_count_C(size_t n);
+extern const uint64_t * const known_shapes[];
+extern const size_t shapes_count[];
+extern const uint64_t * const known_C_shapes[];
+extern const size_t shapes_C_count[];
+
 
 template <size_t L>
-Shape<L> shape_at(size_t n, size_t i);
-template <>
-Shape<8> shape_at<8>(size_t n, size_t i);
-
-extern template Shape<8> shape_at<8>(size_t n, size_t i);
-extern template Shape<11> shape_at<11>(size_t n, size_t i);
+Shape<L> shape_at(size_t n, size_t i) {
+    return Shape<8>{ known_shapes[n][i] }.to<L>();
+}

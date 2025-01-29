@@ -55,7 +55,7 @@ Shape<L> Shape<L>::translate_unsafe(int x, int y) const {
 
 template <size_t L>
 Shape<L> Shape<L>::canonical_form(unsigned forms) const {
-    auto v = normalize().value;
+    auto v = ~shape_t{};
     for (auto sh : transforms(true)) {
         if (forms & 1u)
             v = std::min(v, sh.value);
@@ -78,17 +78,22 @@ unsigned Shape<L>::symmetry() const {
 }
 
 template <size_t L>
+Shape<L> Shape<L>::extend1() const {
+    auto north = value >> LEN;
+    auto south = value << LEN;
+    auto west = (value & ~FIRST_COL) >> 1u;
+    auto east = (value << 1u) & ~FIRST_COL;
+    return Shape{ value | north | south | west | east };
+}
+
+template <size_t L>
 bool Shape<L>::connected() const {
     if (!value) return false;
-    auto visited = static_cast<shape_t>(value & -value);
+    auto visited = front_shape();
     if (visited == value) return true;
     while (true) {
-        auto north = visited >> LEN;
-        auto south = visited << LEN;
-        auto west = (visited & ~FIRST_COL) >> 1u;
-        auto east = (visited << 1u) & ~FIRST_COL;
-        auto next = (visited | north | south | west | east) & value;
-        if (next == value)
+        auto next = Shape{ visited }.extend1() & *this;
+        if (next == *this)
             return true;
         if (next == visited)
             return false;
@@ -124,6 +129,7 @@ template Shape<8> Shape<8>::translate(int x, int y) const;
 template Shape<8> Shape<8>::translate_unsafe(int x, int y) const;
 template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
 template unsigned Shape<8>::symmetry() const;
+template Shape<8> Shape<8>::extend1() const;
 template bool Shape<8>::connected() const;
 template std::string Shape<8>::to_string() const;
 
@@ -141,5 +147,6 @@ template Shape<11> Shape<11>::translate(int x, int y) const;
 template Shape<11> Shape<11>::translate_unsafe(int x, int y) const;
 template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
 template unsigned Shape<11>::symmetry() const;
+template Shape<11> Shape<11>::extend1() const;
 template bool Shape<11>::connected() const;
 template std::string Shape<11>::to_string() const;

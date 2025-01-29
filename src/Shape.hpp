@@ -167,8 +167,12 @@ public:
         return LEN - top() - height();
     }
 
-    [[nodiscard]] constexpr Shape operator+(Shape other) const {
-        return Shape{ value | ~other.value };
+    [[nodiscard]] constexpr Shape operator|(Shape other) const {
+        return Shape{ value | other.value };
+    }
+
+    [[nodiscard]] constexpr Shape operator&(Shape other) const {
+        return Shape{ value & other.value };
     }
 
     [[nodiscard]] constexpr Shape operator-(Shape other) const {
@@ -269,6 +273,12 @@ public:
 
     [[nodiscard]] unsigned symmetry() const;
 
+    [[nodiscard]] Shape front_shape() const {
+        return Shape{ static_cast<shape_t>(value & -value) };
+    }
+
+    [[nodiscard]] Shape extend1() const;
+
     [[nodiscard]] bool connected() const;
 
     [[nodiscard]] std::string to_string() const;
@@ -317,6 +327,7 @@ extern template Shape<8> Shape<8>::translate(int x, int y) const;
 extern template Shape<8> Shape<8>::translate_unsafe(int x, int y) const;
 extern template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
 extern template unsigned Shape<8>::symmetry() const;
+extern template Shape<8> Shape<8>::extend1() const;
 extern template bool Shape<8>::connected() const;
 extern template std::string Shape<8>::to_string() const;
 
@@ -334,5 +345,6 @@ extern template Shape<11> Shape<11>::translate(int x, int y) const;
 extern template Shape<11> Shape<11>::translate_unsafe(int x, int y) const;
 extern template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
 extern template unsigned Shape<11>::symmetry() const;
+extern template Shape<11> Shape<11>::extend1() const;
 extern template bool Shape<11>::connected() const;
 extern template std::string Shape<11>::to_string() const;
