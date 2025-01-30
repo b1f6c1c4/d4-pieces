@@ -1,10 +1,16 @@
 cmake_minimum_required(VERSION 3.21)
-project(pieces)
+if(EMSCRIPTEN)
+    project(pieces)
+else()
+    project(pieces LANGUAGES CXX CUDA)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-arch=sm_89>)
+endif()
 
 set(CMAKE_CXX_STANDARD 23)
 
 add_compile_options(-fuse-ld=lld)
 add_compile_options(-Wall -Wextra -Werror)
+add_compile_options(-Werror $<$<COMPILE_LANGUAGE:CUDA>:all-warnings>)
 add_compile_options(-Wno-parentheses)
 add_compile_options(-Wno-missing-field-initializers)
 add_compile_options(-Wno-unused-function)
@@ -39,12 +45,15 @@ else()
     add_executable(search
         src/search.cpp
         src/searcher.cpp
+        src/searcher_cuda.cu
         src/naming.cpp
         src/Piece.cpp src/Shape.cpp src/Group.cpp
         src/known1.cpp src/known2.cpp)
     target_link_libraries(search PRIVATE boost_thread)
     target_link_libraries(search PRIVATE mimalloc)
     target_compile_options(search PRIVATE -g -O3 -march=native)
+    set_target_properties(search PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
     add_executable(enum src/enum.cpp src/Shape.cpp src/Group.cpp)
     target_compile_options(enum PRIVATE -g -O3)
 endif()
