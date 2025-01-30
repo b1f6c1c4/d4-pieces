@@ -19,6 +19,7 @@
 #include "searcher.hpp"
 #include "known.hpp"
 #include "Shape.hpp"
+#include "searcher_cuda.h"
 
 struct Verify : SearcherFactory {
     struct S : Searcher {
@@ -294,6 +295,7 @@ int main(int argc, char *argv[]) {
     auto best = 0zu;
     */
 
+    show_devices();
     compute_fast_canonical_form();
 
     std::stop_source stop;
@@ -332,7 +334,10 @@ int main(int argc, char *argv[]) {
 
     {
         auto j = monitor(*sf);
-        sf->run();
+        if (::getenv("DEBUG") && *::getenv("DEBUG"))
+            sf->run1();
+        else
+            sf->run();
     }
     delete sf;
 }
