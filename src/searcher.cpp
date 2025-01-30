@@ -52,26 +52,52 @@ void compute_fast_canonical_form() {
 }
 
 uint64_t Searcher::step(Shape<8> empty_area) {
-    if (!empty_area) {
-        if (n_used_pieces < g_nme->min_n || n_used_pieces > g_nme->max_n)
-            return 0;
-        auto id = g_nme->name([this](uint64_t m, uint64_t i){
-            return !!used_pieces[g_nme->name_piece(m, i)];
+    auto cnt = 0ull;
+    // find all shapes covering the first empty block while also fits
+    CudaSearcher cs{ g_nme->size_pieces() };
+    cs.start_search(empty_area.get_value());
+    for (const unsigned char *ptr; (ptr = cs.next());) {
+      std::print("{{ ");
+      for (auto i = 0; i < 8; i++)
+        std::print("0x{:08x}, ", *(uint32_t*)&ptr[4 * i]);
+      std::print("}}\n");
+    }
+    std::abort();
+    for (const unsigned char *ptr; (ptr = cs.next());) {
+        char arr[256]{};
+        for (auto i = 0; i < 32; i++)
+            if (arr[ptr[i]]++)
+                throw std::runtime_error{ "CUDA gives duplicated pieces" };
+        auto id = g_nme->name([&](uint64_t m, uint64_t i){
+            return !!arr[g_nme->name_piece(m, i)];
         });
         if (id) {
-            return log(*id);
+            if (log(*id))
+                cnt++;
         } else {
             std::print("Warning: Naming rejected SearcherCRTP's plan\n");
-            return 0;
         }
     }
-    if (n_used_pieces == g_nme->max_n)
-        return 0;
-
-    char *solutions = searcher_area(g_nme->size_pieces());
-    // find all shapes covering the first empty block while also fits
-    return searcher_step(solutions, empty_area.get_value());
+    return cnt;
 }
+
+void SearcherFactory::run1() {
+    g_board->foreach([&,i=0](Shape<8> sh) mutable {
+        if (should_run(i, sh)) {
+                auto *obj = make();
+                obj->config_index = i;
+                auto t1 = std::chrono::steady_clock::now();
+                auto cnt = obj->step(sh);
+                auto t2 = std::chrono::steady_clock::now();
+                delete obj;
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+                after_run(i, sh, cnt, ms);
+                configs_counter.fetch_add(1, std::memory_order_relaxed);
+            configs_issue_counter++;
+        }
+        i++;
+    });
+};
 
 void SearcherFactory::run() {
     boost::basic_thread_pool pool;

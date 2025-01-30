@@ -52,6 +52,7 @@ public:
     virtual ~SearcherFactory() { }
 
     void run();
+    void run1();
 
     [[nodiscard]] uint64_t work_done() const {
         return work_counter.load(std::memory_order_relaxed);
