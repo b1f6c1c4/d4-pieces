@@ -1,6 +1,9 @@
 #include "searcher.hpp"
 #include "searcher_cuda.h"
 
+#include <array>
+#include <unordered_set>
+#include <bit>
 #include <print>
 #include <chrono>
 
@@ -22,10 +25,12 @@ void compute_fast_canonical_form() {
     using nm_t = decltype(tt_t::nm);
     std::unordered_map<uint64_t, nm_t> map;
     auto count = 0zu;
+    std::array<std::unordered_set<uint64_t>, 64> fanout;
     auto push_translate = [&](uint64_t nm, Shape<8> t) {
         for (auto row = 0u; row <= t.bottom(); row++)
             for (auto col = 0u; col <= t.right(); col++) {
                 auto v = t.translate_unsafe(col, row).get_value();
+                fanout[std::countr_zero(v)].emplace(v);
                 if (nm >= std::numeric_limits<nm_t>::max())
                     throw std::runtime_error{ "nm_t too small" };
                 map.emplace(v, nm).second;
@@ -47,6 +52,10 @@ void compute_fast_canonical_form() {
     for (auto ptr = fast_canonical_form; auto [k, v] : map)
         *ptr++ = tt_t{ k, v };
     std::print("cached {} => {} canonical forms\n", fast_canonical_forms, count);
+    auto max = 0zu;
+    for (auto &f : fanout)
+        max = std::max(max, f.size());
+    std::print("max fanout = {}\n", max);
     fcf_cache(g_nme->size_pieces());
     std::print("moved to GPU\n");
 }
@@ -57,18 +66,17 @@ uint64_t Searcher::step(Shape<8> empty_area) {
     CudaSearcher cs{ g_nme->size_pieces() };
     cs.start_search(empty_area.get_value());
     for (const unsigned char *ptr; (ptr = cs.next());) {
-      std::print("{{ ");
-      for (auto i = 0; i < 8; i++)
-        std::print("0x{:08x}, ", *(uint32_t*)&ptr[4 * i]);
-      std::print("}}\n");
-    }
-    std::abort();
-    for (const unsigned char *ptr; (ptr = cs.next());) {
+        std::print("{{ ");
+        for (auto i = 0; i < 8; i++)
+            std::print("0x{:08x}, ", *(uint32_t*)&ptr[4 * i]);
+        std::print("}}\n");
         char arr[256]{};
         for (auto i = 0; i < 32; i++)
-            if (arr[ptr[i]]++)
-                throw std::runtime_error{ "CUDA gives duplicated pieces" };
-        auto id = g_nme->name([&](uint64_t m, uint64_t i){
+            if (ptr[i] != 255)
+                if (arr[ptr[i]]++)
+                    std::print("CUDA gives duplicated pieces {}", +ptr[i]);
+                    // throw std::runtime_error{ std::format("CUDA gives duplicated pieces {}", +ptr[i]) };
+        auto id = g_nme->name([&](uint64_t m, uint64_t i) {
             return !!arr[g_nme->name_piece(m, i)];
         });
         if (id) {

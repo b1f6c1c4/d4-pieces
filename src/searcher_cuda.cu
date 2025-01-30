@@ -1,20 +1,34 @@
 #include "searcher_cuda.h"
 
 #include <iostream>
+#include <format>
+#include <unistd.h>
 #include <cstdio>
 
 #define MAX_FCFS 16384
 #define MAX_SOLUTIONS 1048576
 #define fcf_threads 64
 
+#define C(ans) { chk_impl((ans), __FILE__, __LINE__); }
+
+static inline void chk_impl(cudaError_t code, const char *file, int line) {
+    if (code != cudaSuccess) {
+        std::cerr << std::format("CUDA: {} @ {}:{}\n", cudaGetErrorString(code), file, line);
+    }
+}
+
 __device__ static tt_t fcf[MAX_FCFS];
 __device__ static size_t shps;
 __device__ static size_t fcfs;
 
 void fcf_cache(size_t num_shapes) {
-    cudaMemcpyToSymbol(fcf, fast_canonical_form, fast_canonical_forms * sizeof(tt_t));
-    cudaMemcpyToSymbol(shps, &num_shapes, sizeof(size_t));
-    cudaMemcpyToSymbol(fcfs, &fast_canonical_forms, sizeof(size_t));
+    C(cudaMemcpyToSymbol(fcf, fast_canonical_form, fast_canonical_forms * sizeof(tt_t)));
+    C(cudaMemcpyToSymbol(shps, &num_shapes, sizeof(size_t)));
+    C(cudaMemcpyToSymbol(fcfs, &fast_canonical_forms, sizeof(size_t)));
+    C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
+    size_t drplc;
+    C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
+    std::cout << std::format("DRPLC = {}\n", drplc);
 }
 
 template <unsigned D> // 0 ~ 31
@@ -36,14 +50,14 @@ void searcher_impl(uint64_t empty_area,
     if (shape & ~empty_area) [[likely]] goto fin;
     nmx = __byte_perm(nm, 0, 0); // nm nm nm nm
     if constexpr (D) {
-        if constexpr (D <=  4) if (__vcmpeq4(nm, ex0)) [[unlikely]] goto fin;
-        if constexpr (D <=  8) if (__vcmpeq4(nm, ex1)) [[unlikely]] goto fin;
-        if constexpr (D <= 12) if (__vcmpeq4(nm, ex2)) [[unlikely]] goto fin;
-        if constexpr (D <= 16) if (__vcmpeq4(nm, ex3)) [[unlikely]] goto fin;
-        if constexpr (D <= 20) if (__vcmpeq4(nm, ex4)) [[unlikely]] goto fin;
-        if constexpr (D <= 24) if (__vcmpeq4(nm, ex5)) [[unlikely]] goto fin;
-        if constexpr (D <= 28) if (__vcmpeq4(nm, ex6)) [[unlikely]] goto fin;
-        if constexpr (D <= 32) if (__vcmpeq4(nm, ex7)) [[unlikely]] goto fin;
+        if constexpr (D >  0) if (__vcmpeq4(nmx, ex0)) [[unlikely]] goto fin;
+        if constexpr (D >  4) if (__vcmpeq4(nmx, ex1)) [[unlikely]] goto fin;
+        if constexpr (D >  8) if (__vcmpeq4(nmx, ex2)) [[unlikely]] goto fin;
+        if constexpr (D > 12) if (__vcmpeq4(nmx, ex3)) [[unlikely]] goto fin;
+        if constexpr (D > 16) if (__vcmpeq4(nmx, ex4)) [[unlikely]] goto fin;
+        if constexpr (D > 20) if (__vcmpeq4(nmx, ex5)) [[unlikely]] goto fin;
+        if constexpr (D > 24) if (__vcmpeq4(nmx, ex6)) [[unlikely]] goto fin;
+        if constexpr (D > 28) if (__vcmpeq4(nmx, ex7)) [[unlikely]] goto fin;
     }
     nms = static_cast<uint64_t>(nm) << (D % 4) * 8;
     nmm = static_cast<uint64_t>(0xff) << (D % 4) * 8;
@@ -60,22 +74,38 @@ void searcher_impl(uint64_t empty_area,
         auto ptr = solutions[pos];
         if (pos >= MAX_SOLUTIONS)
             goto fin;
-        ptr[0] = (D >=  0) ? ex0 : 0xff;
-        ptr[1] = (D >=  4) ? ex1 : 0xff;
-        ptr[2] = (D >=  8) ? ex2 : 0xff;
-        ptr[3] = (D >= 12) ? ex3 : 0xff;
-        ptr[4] = (D >= 16) ? ex4 : 0xff;
-        ptr[5] = (D >= 20) ? ex5 : 0xff;
-        ptr[6] = (D >= 24) ? ex6 : 0xff;
-        ptr[7] = (D >= 28) ? ex7 : 0xff;
+        ptr[0] = (D >=  0) ? ex0 : ~0u;
+        ptr[1] = (D >=  4) ? ex1 : ~0u;
+        ptr[2] = (D >=  8) ? ex2 : ~0u;
+        ptr[3] = (D >= 12) ? ex3 : ~0u;
+        ptr[4] = (D >= 16) ? ex4 : ~0u;
+        ptr[5] = (D >= 20) ? ex5 : ~0u;
+        ptr[6] = (D >= 24) ? ex6 : ~0u;
+        ptr[7] = (D >= 28) ? ex7 : ~0u;
         goto fin;
     }
     if constexpr (D < 32) {
         auto fcf_blocks = (fcfs + fcf_threads - 1) / fcf_threads;
-        atomicAdd(n_pending, fcf_blocks * fcf_blocks);
+    again:
         searcher_impl<D + 1><<<fcf_blocks, fcf_threads, 0, cudaStreamFireAndForget>>>(
                 empty_area & ~shape, solutions, n_solutions, n_pending,
                 ex0, ex1, ex2, ex3, ex4, ex5, ex6, ex7);
+        auto err = cudaPeekAtLastError();
+        if (err == cudaErrorLaunchPendingCountExceeded) {
+            __nanosleep(~0u);
+            goto again;
+        }
+        if (err != cudaSuccess) {
+            auto pos = atomicAdd(n_solutions, 1);
+            auto ptr = solutions[pos];
+            if (pos >= MAX_SOLUTIONS)
+                goto fin;
+            ptr[0] = 0x5555aaaau;
+            ptr[1] = err;
+            ptr[2] = 0xaaaa5555u;
+            goto fin;
+        }
+        atomicAdd(n_pending, fcf_blocks * fcf_threads);
     }
 fin:
     atomicSub(n_pending, 1);
@@ -83,15 +113,15 @@ fin:
 
 CudaSearcher::CudaSearcher(size_t num_shapes)
     : solutions{}, n_solutions{}, n_solution_processed{}, n_pending{} {
-    cudaMallocManaged(&solutions, MAX_SOLUTIONS * sizeof(*solutions));
-    cudaMallocManaged(&n_solutions, sizeof(n_solutions));
-    cudaMallocManaged(&n_pending, sizeof(n_pending));
+    C(cudaMallocManaged(&solutions, MAX_SOLUTIONS * sizeof(*solutions)));
+    C(cudaMallocManaged(&n_solutions, sizeof(n_solutions)));
+    C(cudaMallocManaged(&n_pending, sizeof(n_pending)));
 }
 
 CudaSearcher::~CudaSearcher() {
-    cudaFree(solutions);
-    cudaFree(const_cast<uint32_t *>(n_solutions));
-    cudaFree(const_cast<uint32_t *>(n_pending));
+    C(cudaFree(solutions));
+    C(cudaFree(const_cast<uint32_t *>(n_solutions)));
+    C(cudaFree(const_cast<uint32_t *>(n_pending)));
 }
 
 void CudaSearcher::start_search(uint64_t empty_area) {
@@ -103,32 +133,35 @@ void CudaSearcher::start_search(uint64_t empty_area) {
         const_cast<uint32_t *>(n_solutions),
         const_cast<uint32_t *>(n_pending),
         ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u);
+    C(cudaPeekAtLastError());
 }
 
 const unsigned char *CudaSearcher::next() {
-    auto o = *n_pending;
-    do {
+    auto flag = false;
+    // auto o = *n_pending;
+    for (auto wait = 1u; ; wait = wait >= 1000000u ? 1000000u : 2 * wait) {
         auto curr = *n_solutions;
         if (curr > n_solution_processed)
             return solutions[n_solution_processed++];
-        auto n = *n_pending;
-        if (n != o) {
-            std::cout << n << std::endl;
-            o = n;
+        if (flag)
+            return nullptr;
+        if (!*n_pending) {
+            flag = true;
+            continue;
         }
-    } while (*n_pending);
-    return nullptr;
+        usleep(wait);
+    }
 }
 
 void show_devices() {
   int nDevices;
-  cudaGetDeviceCount(&nDevices);
+  C(cudaGetDeviceCount(&nDevices));
 
   printf("Number of devices: %d\n", nDevices);
 
   for (int i = 0; i < nDevices; i++) {
     cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, i);
+    C(cudaGetDeviceProperties(&prop, i));
     printf("Device Number: %d\n", i);
     printf("  Device name: %s\n", prop.name);
     printf("  Capability: %d.%d\n", prop.major, prop.minor);
