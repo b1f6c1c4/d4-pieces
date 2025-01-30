@@ -47,7 +47,7 @@ void compute_fast_canonical_form() {
     for (auto ptr = fast_canonical_form; auto [k, v] : map)
         *ptr++ = tt_t{ k, v };
     std::print("cached {} => {} canonical forms\n", fast_canonical_forms, count);
-    fcf_cache();
+    fcf_cache(g_nme->size_pieces());
     std::print("moved to GPU\n");
 }
 
@@ -68,10 +68,9 @@ uint64_t Searcher::step(Shape<8> empty_area) {
     if (n_used_pieces == g_nme->max_n)
         return 0;
 
-    auto cnt = 0ull;
+    char *solutions = searcher_area(g_nme->size_pieces());
     // find all shapes covering the first empty block while also fits
-    searcher_step(empty_area.get_value(), nullptr);
-    return cnt;
+    return searcher_step(solutions, empty_area.get_value());
 }
 
 void SearcherFactory::run() {
