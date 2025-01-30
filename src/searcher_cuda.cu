@@ -2,17 +2,22 @@
 
 #include <iostream>
 
-__device__ static const tt_t *fcf;
+#define MAX_FCFS 16384
+#define MAX_SOLUTIONS 1048576
 
-void fcf_cache() {
-    cudaMalloc(&fcf, fast_canonical_forms * sizeof(tt_t));
-    cudaMemcpy(&fcf, fast_canonical_form, fast_canonical_forms * sizeof(tt_t),
-            cudaMemcpyHostToDevice);
+__device__ static tt_t fcf[MAX_FCFS];
+__device__ static size_t shps;
+__device__ static size_t fcfs;
+
+void fcf_cache(size_t num_shapes) {
+    cudaMemcpyToSymbol(fcf, fast_canonical_form, fast_canonical_forms * sizeof(tt_t));
+    cudaMemcpyToSymbol(&shps, &num_shapes, sizeof(size_t));
+    cudaMemcpyToSymbol(&fcfs, &fast_canonical_forms, sizeof(size_t));
 }
 
 template <unsigned D> // 0 ~ 31
 __global__
-void searcher_impl(uint64_t empty_area, uint32_t fcfs,
+void searcher_impl(uint64_t empty_area, char *output, int *output_sz,
         uint32_t ex0, uint32_t ex1, uint32_t ex2, uint32_t ex3,
         uint32_t ex4, uint32_t ex5, uint32_t ex6, uint32_t ex7) {
     auto idx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -22,7 +27,26 @@ void searcher_impl(uint64_t empty_area, uint32_t fcfs,
     if (shape & ~empty_area) [[likely]] return;
     auto rest = empty_area & ~shape;
     if (!rest) {
-        return; // TODO
+        auto pos = atomicAdd(output_sz, 1);
+        if (pos >= MAX_SOLUTIONS)
+            return; // FIXME: throw
+        auto ptr = &output[fcfs * pos];
+        ptr[nm] = 1;
+#define W(ex) do { \
+        ptr[(ex >>  0) & 0xff] = 1; \
+        ptr[(ex >>  4) & 0xff] = 1; \
+        ptr[(ex >> 12) & 0xff] = 1; \
+        ptr[(ex >> 16) & 0xff] = 1; \
+} while (false)
+        if constexpr (D >  0) W(ex0);
+        if constexpr (D >  4) W(ex1);
+        if constexpr (D >  8) W(ex2);
+        if constexpr (D > 12) W(ex3);
+        if constexpr (D > 16) W(ex4);
+        if constexpr (D > 20) W(ex5);
+        if constexpr (D > 24) W(ex6);
+        if constexpr (D > 28) W(ex7);
+        return;
     }
     if constexpr (D <= 32) {
         uint32_t nmx = __byte_perm(nm, 0, 0); // nm nm nm nm
@@ -48,14 +72,29 @@ void searcher_impl(uint64_t empty_area, uint32_t fcfs,
         else if constexpr (D < 32) ex7 = ((ex7 & ~nmm) | nms);
         auto fcf_blocks = (fcfs + 512 - 1) / 512;
         auto fcf_threads = 512;
-        searcher_impl<D + 1><<<fcf_blocks, fcf_threads>>>(empty_area & ~shape, fcfs,
-            ex0, ex1, ex2, ex3, ex4, ex5, ex6, ex7);
+        searcher_impl<D + 1><<<fcf_blocks, fcf_threads, 0, cudaStreamFireAndForget>>>(
+                empty_area & ~shape, output, output_sz,
+                ex0, ex1, ex2, ex3, ex4, ex5, ex6, ex7);
     }
 }
 
-void searcher_step(uint64_t empty_area, char *possible_pieces) {
+char *searcher_area(size_t num_shapes) {
+    char *output;
+    cudaMallocManaged(&output, MAX_SOLUTIONS * num_shapes * sizeof(char));
+    return output;
+}
+
+size_t searcher_step(char *output, uint64_t empty_area) {
     auto fcf_blocks = (fast_canonical_forms + 512 - 1) / 512;
     auto fcf_threads = 512;
-    searcher_impl<0><<<fcf_blocks, fcf_threads>>>(empty_area, fast_canonical_forms,
+    int *output_sz;
+    cudaMallocManaged(&output_sz, sizeof(int));
+    *output_sz = 0;
+    searcher_impl<0><<<fcf_blocks, fcf_threads>>>(empty_area,
+        output, output_sz,
         ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u);
+    cudaDeviceSynchronize();
+    auto res = *output_sz;
+    cudaFree(output_sz);
+    return res;
 }

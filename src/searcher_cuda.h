@@ -13,5 +13,6 @@ static_assert(sizeof(tt_t) == 16);
 extern tt_t *fast_canonical_form;
 extern size_t fast_canonical_forms;
 
-void fcf_cache();
-void searcher_step(uint64_t empty_area, char *possible_pieces);
+void fcf_cache(size_t num_shapes);
+char *searcher_area(size_t num_shapes);
+size_t searcher_step(char *output, uint64_t empty_area);
