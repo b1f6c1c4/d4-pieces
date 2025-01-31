@@ -33,7 +33,7 @@ void fcf_cache(size_t num_shapes) {
     std::cout << std::format("DRPLC = {}\n", drplc);
 }
 
-template <unsigned D, bool DP = true> // 0 ~ 27
+template <unsigned D> // 0 ~ 27
 __global__
 void searcher_impl(uint64_t empty_area,
         CudaSearcher::R *solutions, uint32_t *n_solutions, uint32_t *n_pending,
@@ -81,14 +81,15 @@ void searcher_impl(uint64_t empty_area,
         ret.ex[5] = (D >= 20) ? ex5 : ~0u;
         ret.ex[6] = (D >= 24) ? ex6 : ~0u;
         ret.d = D;
-        atomicAdd(n_solutions + 1, 1);
+        atomicAdd_system(n_solutions + 1, 1);
         goto fin;
     }
     if constexpr (D < 28) {
         auto err = cudaErrorLaunchPendingCountExceeded;
         auto fcf_blocks = (fcfs + fcf_threads - 1) / fcf_threads;
-        if constexpr (DP) {
-            atomicAdd(n_pending, fcf_blocks * fcf_threads);
+        auto dp = true;
+        if (dp) {
+            atomicAdd_system(n_pending, fcf_blocks * fcf_threads);
             searcher_impl<D + 1><<<fcf_blocks, fcf_threads, 0, cudaStreamFireAndForget>>>(
                     empty_area & ~shape, solutions, n_solutions, n_pending,
                     ex0, ex1, ex2, ex3, ex4, ex5, ex6);
@@ -112,13 +113,13 @@ void searcher_impl(uint64_t empty_area,
             ret.empty_area = err;
             ret.d = 0x5555aaaa;
         }
-        atomicAdd(n_solutions + 1, 1);
-        if constexpr (DP)
-            atomicSub(n_pending, fcf_blocks * fcf_threads);
+        atomicAdd_system(n_solutions + 1, 1);
+        if (dp)
+            atomicSub_system(n_pending, fcf_blocks * fcf_threads);
         goto fin;
     }
-fin:
-    atomicSub(n_pending, 1);
+fin:;
+    atomicSub_system(n_pending, 1);
 }
 
 CudaSearcher::CudaSearcher(size_t num_shapes)
@@ -142,18 +143,11 @@ void CudaSearcher::start_search(uint64_t empty_area) {
 }
 
 void CudaSearcher::invoke_kernel(const R &args) {
-    // std::cerr << std::format("~{}th invoking {} kernel @ ea={}/{:016x} ex={:08x}{:08x}{:08x}{:08x}{:08x}{:08x}{:08x}",
-    //         n_kernel_invoked++, args.d,
-    //         std::popcount(args.empty_area), args.empty_area,
-    //         args.ex[0], args.ex[1], args.ex[2], args.ex[3],
-    //         args.ex[4], args.ex[5], args.ex[6]);
     for (auto wait = 1u; ; wait = wait >= 1000000u ? 1000000u : 2 * wait) {
         auto fcf_blocks = (fast_canonical_forms + fcf_threads - 1) / fcf_threads;
         auto err = cudaSuccess;
-        if (false)
-            ;
 #define INV(D) \
-        else if (args.d == D) { \
+        if (args.d == D) { \
             searcher_impl<D><<<fcf_blocks, fcf_threads>>>( \
                 args.empty_area, solutions, \
                 const_cast<uint32_t *>(n_solutions), \
@@ -170,22 +164,26 @@ void CudaSearcher::invoke_kernel(const R &args) {
         INV(24) INV(25) INV(26) INV(27)
 #undef INV
         if (err == cudaErrorLaunchPendingCountExceeded) {
-            std::cerr<< '.';
+            std::cerr << '.';
             continue;
         }
         C(err);
         // no need to worry about ordering - we are the host thread
         cuda::atomic_ref pd{ *const_cast<uint32_t *>(n_pending) };
-        pd += fcf_blocks * fcf_threads;
+        auto p = pd += fcf_blocks * fcf_threads;
+        if (n_kernel_invoked++ % 1000 == 0)
+            std::cerr << std::format("p={:10} D{:2} ea{:02} <<<{}, {}>>> k={}\n",
+                    p, args.d, std::popcount(args.empty_area), fcf_blocks, fcf_threads, n_kernel_invoked);
         return;
     }
 }
 
 const unsigned char *CudaSearcher::next() {
     auto flag = false;
-    auto old_val = 0u;
+    // auto old_val = 0u;
     // auto o = *n_pending;
-    for (auto wait = 1u; ; wait = wait >= 1000000u ? 1000000u : 2 * wait) {
+    while (true) {
+    // for (auto wait = 1u; ; wait = wait >= 1000000u ? 1000000u : 2 * wait) {
         auto curr = n_solutions[1];
     again:
         if (curr > n_solution_processed) {
@@ -208,11 +206,12 @@ const unsigned char *CudaSearcher::next() {
             flag = true;
             continue;
         }
-        if (wait >= 10000000u && val != old_val) {
-            std::cerr << std::format("n_pending = {}\n", val);
-            old_val = val;
-        }
-        usleep(wait);
+        // if (wait >= 10000000u && val != old_val) {
+        //     std::cerr << std::format("waiting, n_pending = {}\n", val);
+        //     old_val = val;
+        // }
+        // usleep(wait);
+        usleep(1);
     }
 }
 

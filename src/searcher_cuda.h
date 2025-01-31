@@ -33,7 +33,8 @@ private:
     // n_solutions[0] for device write start
     // n_solutions[1] for device write finish
     volatile uint32_t *n_solutions;
-    uint32_t n_solution_processed, n_kernel_invoked;
+    uint32_t n_solution_processed;
+    size_t n_kernel_invoked;
     volatile uint32_t *n_pending;
 
     void invoke_kernel(const R &regs);

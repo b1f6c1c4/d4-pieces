@@ -127,7 +127,7 @@ total: {} B
 
         auto m = ::mmap(nullptr, mem_sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED)
-            throw std::runtime_error{ "mmap(2): "s + std::strerror(errno) };
+            throw std::runtime_error{ std::format("mmap(2): {} (mem_sz={}GiB)", std::strerror(errno), mem_sz / 1024.0 / 1024.0 / 1024.0) };
         auto mc = reinterpret_cast<unsigned char *>(m);
         cfgs = reinterpret_cast<config_descriptor *>(mc);
         nmes = reinterpret_cast<uint64_t *>(mc += cfgs_size);
