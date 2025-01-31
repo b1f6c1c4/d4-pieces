@@ -7,13 +7,16 @@ struct tt_t {
     uint64_t shape;
     uint8_t nm;
 };
-static_assert(sizeof(tt_t) == 16);
-
-// [(Shape, piece naming)]
-extern tt_t *fast_canonical_form;
-extern size_t fast_canonical_forms;
-
-void fcf_cache(size_t num_shapes);
+struct frow_t {
+    uint64_t shape;
+    uint32_t nm0123;
+};
+struct frow_info_t {
+    const frow_t *data;
+    uint32_t sz[5];
+};
+// ea: 0..15
+void frow_cache(unsigned ea, const frow_t *l, const frow_t *r, size_t llen, size_t rlen);
 
 struct CudaSearcher {
     explicit CudaSearcher(size_t num_shapes);

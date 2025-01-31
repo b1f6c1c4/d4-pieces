@@ -2,8 +2,9 @@
 #include "searcher_cuda.h"
 
 #include <array>
-#include <unordered_set>
 #include <bit>
+#include <compare>
+#include <set>
 #include <print>
 #include <chrono>
 
@@ -18,22 +19,34 @@ std::optional<Board<8>> g_board;
 std::optional<Naming> g_nme;
 unsigned g_sym;
 
-tt_t *fast_canonical_form;
-size_t fast_canonical_forms;
+void show_devices() { }
+
+static std::array<std::vector<frow_t>, 16> frowL, frowR;
+static std::array<frow_info_t, 16> frowInfoL, frowInfoR;
+
+std::strong_ordering operator<=>(const frow_t &l, const frow_t &r) {
+    if (l.shape < r.shape)
+        return std::strong_ordering::less;
+    if (l.shape > r.shape)
+        return std::strong_ordering::greater;
+    if (l.nm0123 < r.nm0123)
+        return std::strong_ordering::less;
+    if (l.nm0123 > r.nm0123)
+        return std::strong_ordering::greater;
+    return std::strong_ordering::equal;
+}
 
 void compute_fast_canonical_form() {
     using nm_t = decltype(tt_t::nm);
-    std::unordered_map<uint64_t, nm_t> map;
     auto count = 0zu;
-    std::array<std::unordered_set<uint64_t>, 64> fanout;
+    std::array<std::vector<tt_t>, 64> fanout;
     auto push_translate = [&](uint64_t nm, Shape<8> t) {
         for (auto row = 0u; row <= t.bottom(); row++)
             for (auto col = 0u; col <= t.right(); col++) {
                 auto v = t.translate_unsafe(col, row).get_value();
-                fanout[std::countr_zero(v)].emplace(v);
                 if (nm >= std::numeric_limits<nm_t>::max())
                     throw std::runtime_error{ "nm_t too small" };
-                map.emplace(v, nm).second;
+                fanout[std::countr_zero(v)].emplace_back(v, nm);
             }
     };
     for (auto m = g_nme->min_m; m <= g_nme->max_m; m++) {
@@ -47,20 +60,69 @@ void compute_fast_canonical_form() {
             }
         }
     }
-    fast_canonical_form = new tt_t[map.size()]; // uninitialized
-    fast_canonical_forms = map.size();
-    for (auto ptr = fast_canonical_form; auto [k, v] : map)
-        *ptr++ = tt_t{ k, v };
-    std::print("cached {} => {} canonical forms\n", fast_canonical_forms, count);
-    auto max = 0zu;
-    for (auto &f : fanout)
-        max = std::max(max, f.size());
-    std::print("max fanout = {}\n", max);
-    fcf_cache(g_nme->size_pieces());
-    std::print("moved to GPU\n");
+    for (auto pos = 0u; pos < 64u; pos++) {
+        auto &f = fanout[pos];
+        std::ranges::sort(f, std::less{}, &tt_t::shape);
+        auto [end, _] = std::ranges::unique(f, std::ranges::equal_to{}, &tt_t::shape);
+        f.erase(end, f.end());
+    }
+
+    for (auto ea = 1u; ea < 16u; ea++) {
+        char used[256]{};
+        std::vector<tt_t> used_v;
+        std::set<frow_t> fL, fR;
+        auto invest = [&](this auto &&self, uint64_t empty_area, uint64_t mask, uint64_t original, auto &&obj) {
+            if (!(empty_area & mask)) {
+                std::vector<nm_t> nms(4, 0xff);
+                for (auto &&[nm, tt] : std::views::zip(nms, used_v))
+                    nm = tt.nm;
+                std::ranges::sort(nms);
+                obj.emplace(frow_t{
+                        (original & ~empty_area),
+                        ((uint32_t)nms[3] << 24) |
+                        ((uint32_t)nms[2] << 16) |
+                        ((uint32_t)nms[1] <<  8) |
+                        ((uint32_t)nms[0] <<  0) });
+                return;
+            }
+            auto pos = std::countr_zero(empty_area);
+            for (auto [shape, nm] : fanout[pos]) {
+                if (used[nm]) [[unlikely]]
+                    continue;
+                if (shape & ~empty_area) [[unlikely]]
+                    continue;
+                used[nm] = 1, used_v.push_back({ shape, nm });
+                self(empty_area & ~shape, mask, original, obj);
+                used[nm] = 0, used_v.pop_back();
+            }
+        };
+        auto regularize = [&](std::vector<frow_t> &f, const std::set<frow_t> &fs) {
+            frow_info_t fi;
+            f.reserve(fs.size());
+            for (auto ff : fs)
+                f.emplace_back(ff);
+            fi.data = f.data();
+            for (auto i = 0; i < 5; i++) {
+                fi.sz[i] = std::ranges::upper_bound(f,
+                        0b11111111ull << (8 * i), std::less{}, &frow_t::shape) - f.begin();
+                std::print("/{}", fi.sz[i]);
+            }
+            if (fi.sz[4] != f.size())
+                throw std::runtime_error{ "internal error" };
+            return fi;
+        };
+        std::print("[0b{:08b}] => L", ea);
+        invest(ea | ~0b00001111u, 0b00001111u, ea | ~0b00001111u, fL);
+        frowInfoL[ea] = regularize(frowL[ea], fL);
+        std::print(" R");
+        invest((ea << 4) | ~0b11111111u, 0b11110000u, (ea << 4) | ~0b11111111u, fR);
+        frowInfoR[ea] = regularize(frowL[ea], fR);
+        std::print("\n");
+    }
+    std::abort();
 }
 
-uint64_t Searcher::step(Shape<8> empty_area) {
+uint64_t Searcher::step(Shape<8> empty_area) { /*
     auto cnt = 0ull;
     // find all shapes covering the first empty block while also fits
     CudaSearcher cs{ g_nme->size_pieces() };
@@ -87,6 +149,7 @@ uint64_t Searcher::step(Shape<8> empty_area) {
         }
     }
     return cnt;
+    */ return 0;
 }
 
 void SearcherFactory::run1() {
