@@ -67,11 +67,11 @@ uint64_t Searcher::step(Shape<8> empty_area) {
     cs.start_search(empty_area.get_value());
     for (const unsigned char *ptr; (ptr = cs.next());) {
         std::print("{{ ");
-        for (auto i = 0; i < 8; i++)
+        for (auto i = 0; i < 7; i++)
             std::print("0x{:08x}, ", *(uint32_t*)&ptr[4 * i]);
         std::print("}}\n");
         char arr[256]{};
-        for (auto i = 0; i < 32; i++)
+        for (auto i = 0; i < 28; i++)
             if (ptr[i] != 255)
                 if (arr[ptr[i]]++)
                     std::print("CUDA gives duplicated pieces {}", +ptr[i]);
