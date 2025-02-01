@@ -1,4 +1,5 @@
 #include "Shape.hpp"
+#include <algorithm>
 #include <string>
 #include <ranges>
 
@@ -90,15 +91,35 @@ template <size_t L>
 bool Shape<L>::connected() const {
     if (!value) return false;
     auto visited = front_shape();
-    if (visited == value) return true;
     while (true) {
-        auto next = Shape{ visited }.extend1() & *this;
+        auto next = (visited.extend1() & *this);
         if (next == *this)
             return true;
         if (next == visited)
             return false;
         visited = next;
     }
+}
+
+template <size_t L>
+Shape<L> Shape<L>::sml_island() const {
+    if (!value) return Shape{ 0u };
+    std::vector<Shape> islands;
+    auto curr = *this;
+    while (curr) {
+        auto visited = curr.front_shape();
+        while (true) {
+            auto next = (visited.extend1() & curr);
+            if (next == visited)
+                break;
+            visited = next;
+        }
+        islands.push_back(visited);
+        curr = curr - visited;
+    }
+    std::ranges::sort(islands, std::less{}, &Shape::value);
+    std::ranges::stable_sort(islands, std::less{}, &Shape::size);
+    return islands.front();
 }
 
 template <size_t L>
@@ -131,6 +152,7 @@ template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
 template unsigned Shape<8>::symmetry() const;
 template Shape<8> Shape<8>::extend1() const;
 template bool Shape<8>::connected() const;
+template Shape<8> Shape<8>::sml_island() const;
 template std::string Shape<8>::to_string() const;
 
 template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
@@ -149,4 +171,5 @@ template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
 template unsigned Shape<11>::symmetry() const;
 template Shape<11> Shape<11>::extend1() const;
 template bool Shape<11>::connected() const;
+template Shape<11> Shape<11>::sml_island() const;
 template std::string Shape<11>::to_string() const;

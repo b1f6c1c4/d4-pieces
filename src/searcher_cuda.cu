@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <cstdio>
 
-#define MAX_FCFS 384
 #define MAX_SOLUTIONS (1ull << 24)
 
 /**
@@ -31,149 +30,160 @@ static inline void chk_impl(cudaError_t code, const char *file, int line) {
     }
 }
 
-__managed__ static tt_t fcf[64 * MAX_FCFS];
-__device__ static unsigned fcfs[64];
-static unsigned h_fcfs[64];
+__host__ static const frow_info_t *h_frowInfoL, *h_frowInfoR;
+__device__ static frow_info_t d_frowInfoL[16], d_frowInfoR[16];
 
-void fcf_cache(unsigned pos, const tt_t *data, size_t len) {
-    if (len > MAX_FCFS)
-        throw std::runtime_error{ std::format("fcf too large {}/{}", len, MAX_FCFS) };
-    C(cudaMemcpyToSymbol(fcf, data, len * sizeof(tt_t), pos * MAX_FCFS * sizeof(tt_t)));
-    C(cudaMemcpyToSymbol(fcfs, &len, sizeof(unsigned), pos * sizeof(unsigned)));
-    h_fcfs[pos] = len;
-    if (!pos) {
-        C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
-        size_t drplc;
-        C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
-        std::cout << std::format("DRPLC = {}\n", drplc);
+void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
+    h_frowInfoL = fiL;
+    h_frowInfoR = fiR;
+    for (auto i = 0; i < 16; i++) {
+        frow_info_t fL{ fiL[i] }, fR{ fiR[i] };
+        C(cudaMalloc(&fL.data, fiL[i].sz[5] * sizeof(frow_t)));
+        C(cudaMalloc(&fR.data, fiR[i].sz[5] * sizeof(frow_t)));
+        C(cudaMemcpy(fL.data, fiL[i].data, fiL[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
+        C(cudaMemcpy(fR.data, fiR[i].data, fiR[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
+        C(cudaMemcpyToSymbol(d_frowInfoL, fiL, sizeof(frow_info_t), i * sizeof(frow_info_t)));
+        C(cudaMemcpyToSymbol(d_frowInfoR, fiR, sizeof(frow_info_t), i * sizeof(frow_info_t)));
+    }
+    C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
+    size_t drplc;
+    C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
+    std::cout << std::format("DRPLC = {}\n", drplc);
+}
+
+bool h_push_nm(uint32_t &nm_cnt, uint8_t old_nm[16], frow_t &frow) {
+    __builtin_assume(nm_cnt < 16);
+    for (auto v = 0; v < 4; v++) {
+        auto nm = frow.nm[v];
+        if (nm == 0xffu)
+            break;
+        for (auto o = 0; o < nm_cnt; o++)
+            if (old_nm[o] == nm)
+                return false;
+        old_nm[nm_cnt++] = nm;
+    }
+    return true;
+}
+
+__device__ __forceinline__
+bool d_push_nm(uint32_t &nm_cnt, uint32_t old_nm[4], uint32_t new_nm) {
+#pragma unroll
+    for (auto v = 0; v < 4; v++) {
+        auto nm = (new_nm >> 8 * v) & 0xffu;
+        if (nm == 0xffu)
+            break;
+        auto nmx = __byte_perm(new_nm, 0, v << 0 | v << 4 | v << 8 | v << 12);
+#pragma unroll
+        for (auto o = 0; o < 4; o++) {
+            if (4 * o >= nm_cnt)
+                break;
+            if (__vcmpeq4(nmx, old_nm[o])) [[unlikely]]
+                return false;
+        }
+        __builtin_assume(nm_cnt < 16);
+        old_nm[nm_cnt / 4] &= ~(0xffu << nm_cnt % 4 * 8);
+        old_nm[nm_cnt / 4] |= nm << nm_cnt % 4 * 8;
+        nm_cnt++;
+    }
+    return true;
+}
+
+void h_row_search(uint64_t idx,
+        CudaSearcher::R *solutions,
+        uint64_t *n_solutions_,
+        uint64_t *n_next_,
+        CudaSearcher::C cfg) {
+    std::atomic_ref n_solutions{ n_solutions_ };
+    std::atomic_ref n_next{ n_next_ };
+    auto szid = min(cfg.height - 1, 5);
+    auto &f0L = h_frowInfoL[cfg.empty_area >> 0 & 0xfu];
+    auto &f0R = h_frowInfoR[cfg.empty_area >> 4 & 0xfu];
+    auto &fL = f0L.data[idx / f0R.sz[szid]];
+    auto &fR = f0R.data[idx % f0R.sz[szid]];
+    if (fL.shape & ~cfg.empty_area) return;
+    if (fR.shape & ~cfg.empty_area) return;
+    if (fL.shape & fR.shape) return;
+    if (!h_push_nm(cfg.nm_cnt, reinterpret_cast<uint8_t *>(cfg.ex), fL)) return;
+    if (!h_push_nm(cfg.nm_cnt, reinterpret_cast<uint8_t *>(cfg.ex), fR)) return;
+    cfg.empty_area &= ~fL.shape;
+    cfg.empty_area &= ~fR.shape;
+    solutions[n_solutions++] = cfg; // slice
+    if (cfg.height > 1) {
+        auto nszid = min(cfg.height - 2, 5);
+        auto nsz = d_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
+            d_frowInfoR[cfg.empty_area >> 0 & 0xfu].sz[nszid];
+        n_next += nsz;
     }
 }
 
-template <unsigned D> // 0 ~ 27
 __global__
-void searcher_impl(uint64_t empty_area,
-        CudaSearcher::R *solutions, uint32_t *n_solutions, uint32_t *n_pending,
-        uint32_t ex0, uint32_t ex1, uint32_t ex2, uint32_t ex3,
-        uint32_t ex4, uint32_t ex5, uint32_t ex6) {
-    uint64_t nms{}, nmm{}, shape{}, next{};
-    uint32_t nmx{};
-    uint8_t nm{};
-
-    auto idx = threadIdx.x + blockIdx.x * blockDim.x;
-    auto pos = __ffsll(empty_area) - 1;
-    if (idx >= fcfs[pos]) goto fin;
-    shape = fcf[pos * MAX_FCFS + idx].shape;
-    nm = fcf[pos * MAX_FCFS + idx].nm;
-    if (!(shape & empty_area & -empty_area)) [[unlikely]] {
-        auto sptr = atomicAdd(n_solutions, 1);
-        auto &ret = solutions[sptr % MAX_SOLUTIONS];
-        ret.empty_area = empty_area;
-        ret.ex[0] = shape >> 32;
-        ret.ex[1] = shape;
-        ret.ex[2] = ((uint64_t)&fcf[pos * MAX_FCFS + idx].shape) >> 32;
-        ret.ex[3] = ((uint64_t)&fcf[pos * MAX_FCFS + idx].shape);
-        ret.ex[4] = pos;
-        ret.ex[5] = idx;
-        ret.ex[6] = (fcf[pos * MAX_FCFS + idx].shape & 0xffffffffull);
-        ret.d = 0xaaaa5555;
-        atomicAdd_system(n_solutions + 1, 1);
-        goto fin;
-    }
-    if (shape & ~empty_area) [[likely]] goto fin;
-    nmx = __byte_perm(nm, 0, 0); // nm nm nm nm
-    if constexpr (D) {
-        if constexpr (D >  0) if (__vcmpeq4(nmx, ex0)) [[unlikely]] goto fin;
-        if constexpr (D >  4) if (__vcmpeq4(nmx, ex1)) [[unlikely]] goto fin;
-        if constexpr (D >  8) if (__vcmpeq4(nmx, ex2)) [[unlikely]] goto fin;
-        if constexpr (D > 12) if (__vcmpeq4(nmx, ex3)) [[unlikely]] goto fin;
-        if constexpr (D > 16) if (__vcmpeq4(nmx, ex4)) [[unlikely]] goto fin;
-        if constexpr (D > 20) if (__vcmpeq4(nmx, ex5)) [[unlikely]] goto fin;
-        if constexpr (D > 24) if (__vcmpeq4(nmx, ex6)) [[unlikely]] goto fin;
-    }
-    nms = static_cast<uint64_t>(nm) << (D % 4) * 8;
-    nmm = static_cast<uint64_t>(0xff) << (D % 4) * 8;
-         if constexpr (D <  4) ex0 = ((ex0 & ~nmm) | nms);
-    else if constexpr (D <  8) ex1 = ((ex1 & ~nmm) | nms);
-    else if constexpr (D < 12) ex2 = ((ex2 & ~nmm) | nms);
-    else if constexpr (D < 16) ex3 = ((ex3 & ~nmm) | nms);
-    else if constexpr (D < 20) ex4 = ((ex4 & ~nmm) | nms);
-    else if constexpr (D < 24) ex5 = ((ex5 & ~nmm) | nms);
-    else if constexpr (D < 28) ex6 = ((ex6 & ~nmm) | nms);
-    next = empty_area & ~shape;
-    if (!next) {
-        auto sptr = atomicAdd(n_solutions, 1);
-        auto &ret = solutions[sptr % MAX_SOLUTIONS];
-        ret.empty_area = 0u;
-        ret.ex[0] = (D >=  0) ? ex0 : ~0u;
-        ret.ex[1] = (D >=  4) ? ex1 : ~0u;
-        ret.ex[2] = (D >=  8) ? ex2 : ~0u;
-        ret.ex[3] = (D >= 12) ? ex3 : ~0u;
-        ret.ex[4] = (D >= 16) ? ex4 : ~0u;
-        ret.ex[5] = (D >= 20) ? ex5 : ~0u;
-        ret.ex[6] = (D >= 24) ? ex6 : ~0u;
-        ret.d = D;
-        atomicAdd_system(n_solutions + 1, 1);
-        goto fin;
-    }
-    if constexpr (D < 28) {
-        auto err = cudaErrorLaunchPendingCountExceeded;
-        auto fcf_threads = fcfs[__ffsll(next)];
-        auto dp = true;
-        if (dp) {
-            atomicAdd_system(n_pending, fcf_threads);
-            searcher_impl<D + 1><<<1, fcf_threads, 0, cudaStreamFireAndForget>>>(
-                    next, solutions, n_solutions, n_pending,
-                    ex0, ex1, ex2, ex3, ex4, ex5, ex6);
-            err = cudaPeekAtLastError();
-            if (err == cudaSuccess)
-                goto fin;
-        }
-        auto sptr = atomicAdd(n_solutions, 1);
-        auto &ret = solutions[sptr % MAX_SOLUTIONS];
-        ret.ex[0] = (D >=  0) ? ex0 : ~0u;
-        ret.ex[1] = (D >=  4) ? ex1 : ~0u;
-        ret.ex[2] = (D >=  8) ? ex2 : ~0u;
-        ret.ex[3] = (D >= 12) ? ex3 : ~0u;
-        ret.ex[4] = (D >= 16) ? ex4 : ~0u;
-        ret.ex[5] = (D >= 20) ? ex5 : ~0u;
-        ret.ex[6] = (D >= 24) ? ex6 : ~0u;
-        if (err == cudaErrorLaunchPendingCountExceeded) {
-            ret.empty_area = empty_area & ~shape;
-            ret.d = D + 1;
-        } else {
-            ret.empty_area = err;
-            ret.d = 0x5555aaaa;
-        }
-        atomicAdd_system(n_solutions + 1, 1);
-        if (dp)
-            atomicSub_system(n_pending, fcf_threads);
-        goto fin;
-    }
-fin:;
-    atomicSub_system(n_pending, 1);
+void d_row_search(
+        CudaSearcher::R *solutions,
+        uint64_t *n_solutions,
+        uint64_t *n_next,
+        CudaSearcher::C cfg) {
+     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
+     auto szid = min(cfg.height - 1, 5);
+     auto &f0L = d_frowInfoL[cfg.empty_area >> 0 & 0xfu];
+     auto &f0R = d_frowInfoR[cfg.empty_area >> 4 & 0xfu];
+     auto &fL = f0L.data[idx / f0R.sz[szid]];
+     auto &fR = f0R.data[idx % f0R.sz[szid]];
+     if (fL.shape & ~cfg.empty_area) return;
+     if (fR.shape & ~cfg.empty_area) return;
+     if (fL.shape & fR.shape) return;
+     if (!d_push_nm(cfg.nm_cnt, cfg.ex, fL.nm0123)) return;
+     if (!d_push_nm(cfg.nm_cnt, cfg.ex, fR.nm0123)) return;
+     cfg.empty_area &= ~fL.shape;
+     cfg.empty_area &= ~fR.shape;
+     solutions[atomicAdd(n_solutions, 1)] = cfg; // slice
+     if (cfg.height > 1) {
+         auto nszid = min(cfg.height - 2, 5);
+         auto nsz = d_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
+             d_frowInfoR[cfg.empty_area >> 0 & 0xfu].sz[nszid];
+         atomicAdd(n_next, nsz);
+     }
 }
 
-CudaSearcher::CudaSearcher(size_t num_shapes)
-    : solutions{}, n_solutions{}, n_solution_processed{}, n_kernel_invoked{}, n_pending{} {
-    C(cudaMallocManaged(&solutions, MAX_SOLUTIONS * sizeof(R)));
-    C(cudaMallocManaged(&n_solutions, 2 * sizeof(n_solutions)));
-    C(cudaMallocManaged(&n_pending, sizeof(n_pending)));
+CudaSearcher::CudaSearcher(uint64_t empty_area)
+    : height{ 8 }, n_solutions{ 1 }, solutions{
+        new R[]{ empty_area, { ~0u, ~0u, ~0u, ~0u } } {
+    if (status() != HOST)
+        throw std::runtime_error{ "new solutions weird" };
 }
 
 CudaSearcher::~CudaSearcher() {
-    C(cudaFree(solutions));
-    C(cudaFree(const_cast<uint32_t *>(n_solutions)));
-    C(cudaFree(const_cast<uint32_t *>(n_pending)));
+    if (status() == HOST)
+        delete [] solutions;
+    else
+        C(cudaFree(solutions));
 }
 
-void CudaSearcher::start_search(uint64_t empty_area) {
-    n_solutions[0] = 0;
-    n_solutions[1] = 0;
-    *n_pending = 0;
-    invoke_kernel(R{ empty_area, 0u, { ~0u, ~0u, ~0u, ~0u, ~0u, ~0u, ~0u } });
+void CudaSearcher::search_CPU1() {
+    ensure_CPU();
+    height--;
+    auto solutions = new R[n_next];
+    uint64_t n_solutions{}, n_next{};
+    for (auto i = 0zu; i < this->n_solutions; i++)
+        h_row_search(i, solutions, &n_solutions, &n_next,
+                C{ this->solutions[i], height });
+}
+
+    C(cudaMallocManaged(&solutions, MAX_SOLUTIONS * sizeof(R)));
+    C(cudaMallocManaged(&n_solutions, 2 * sizeof(n_solutions)));
+    C(cudaMallocManaged(&n_pending, sizeof(n_pending)));
+    C(cudaFree(const_cast<uint32_t *>(n_solutions)));
+    C(cudaFree(const_cast<uint32_t *>(n_pending)));
+mem_t CudaSearcher::status() const {
+    if (!solutions)
+        return EMPTY;
+    CUmemorytype ret;
+    C(cuPointerGetAttribute(&ret, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, solutions));
+    return static_cast<mem_t>(ret);
 }
 
 void CudaSearcher::invoke_kernel(const R &args) {
+    (void)args;
+    /*
     for (auto wait = 1u; ; wait = wait >= 1000000u ? 1000000u : 2 * wait) {
         auto fcf_threads = h_fcfs[std::countr_zero(args.empty_area)];
         auto err = cudaSuccess;
@@ -186,13 +196,13 @@ void CudaSearcher::invoke_kernel(const R &args) {
                 args.ex[0], args.ex[1], args.ex[2], args.ex[3], \
                 args.ex[4], args.ex[5], args.ex[6]); \
             err = cudaPeekAtLastError(); }
-        INV( 0) INV( 1) INV( 2) INV( 3)
-        INV( 4) INV( 5) INV( 6) INV( 7)
-        INV( 8) INV( 9) INV(10) INV(11)
-        INV(12) INV(13) INV(14) INV(15)
-        INV(16) INV(17) INV(18) INV(19)
-        INV(20) INV(21) INV(22) INV(23)
-        INV(24) INV(25) INV(26) INV(27)
+        // INV( 0) INV( 1) INV( 2) INV( 3)
+        // INV( 4) INV( 5) INV( 6) INV( 7)
+        // INV( 8) INV( 9) INV(10) INV(11)
+        // INV(12) INV(13) INV(14) INV(15)
+        // INV(16) INV(17) INV(18) INV(19)
+        // INV(20) INV(21) INV(22) INV(23)
+        // INV(24) INV(25) INV(26) INV(27)
 #undef INV
         if (err == cudaErrorLaunchPendingCountExceeded) {
             std::cerr << '.';
@@ -206,9 +216,12 @@ void CudaSearcher::invoke_kernel(const R &args) {
                 p, args.d, std::popcount(args.empty_area), fcf_threads, n_kernel_invoked);
         return;
     }
+    */
 }
 
 const unsigned char *CudaSearcher::next() {
+    return nullptr;
+    /*
     auto flag = false;
     // auto old_val = 0u;
     // auto o = *n_pending;
@@ -250,6 +263,7 @@ const unsigned char *CudaSearcher::next() {
         usleep(10000);
         std::cerr << std::format("waiting, n_pending = {}\n", val);
     }
+    */
 }
 
 void show_devices() {
@@ -297,5 +311,7 @@ void show_devices() {
     printf("  Sync domain: %d\n",v);
     cudaDeviceGetAttribute(&v, cudaDevAttrSingleToDoublePrecisionPerfRatio, i);
     printf("  float/double ratio: %d\n", v);
+    cudaDeviceGetAttribute(&v, (cudaDeviceAttr)102, i);
+    printf("  VMM: %d\n", v);
   }
 }

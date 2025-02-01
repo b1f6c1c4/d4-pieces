@@ -281,6 +281,8 @@ public:
 
     [[nodiscard]] bool connected() const;
 
+    [[nodiscard]] Shape sml_island() const;
+
     [[nodiscard]] std::string to_string() const;
 
     template <size_t M>
@@ -329,6 +331,7 @@ extern template Shape<8> Shape<8>::canonical_form(unsigned forms) const;
 extern template unsigned Shape<8>::symmetry() const;
 extern template Shape<8> Shape<8>::extend1() const;
 extern template bool Shape<8>::connected() const;
+extern template Shape<8> Shape<8>::sml_island() const;
 extern template std::string Shape<8>::to_string() const;
 
 extern template Shape<11> Shape<11>::transform<false, false, false>(bool norm) const;
@@ -347,4 +350,5 @@ extern template Shape<11> Shape<11>::canonical_form(unsigned forms) const;
 extern template unsigned Shape<11>::symmetry() const;
 extern template Shape<11> Shape<11>::extend1() const;
 extern template bool Shape<11>::connected() const;
+extern template Shape<11> Shape<11>::sml_island() const;
 extern template std::string Shape<11>::to_string() const;

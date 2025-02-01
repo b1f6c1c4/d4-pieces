@@ -45,7 +45,7 @@ else()
     add_executable(search
         src/search.cpp
         src/searcher.cpp
-        # src/searcher_cuda.cu
+        src/searcher_cuda.cu
         src/naming.cpp
         src/Piece.cpp src/Shape.cpp src/Group.cpp
         src/known1.cpp src/known2.cpp)
@@ -53,6 +53,7 @@ else()
     target_link_libraries(search PRIVATE mimalloc)
     target_compile_options(search PRIVATE -O3 -march=native)
     target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-g>)
+    target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>)
     set_target_properties(search PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
     set_target_properties(search PROPERTIES CUDA_ARCHITECTURES "86")
 

@@ -19,8 +19,6 @@ std::optional<Board<8>> g_board;
 std::optional<Naming> g_nme;
 unsigned g_sym;
 
-void show_devices() { }
-
 static std::array<std::vector<frow_t>, 16> frowL, frowR;
 static std::array<frow_info_t, 16> frowInfoL, frowInfoR;
 
@@ -67,59 +65,91 @@ void compute_fast_canonical_form() {
         f.erase(end, f.end());
     }
 
-    for (auto ea = 1u; ea < 16u; ea++) {
-        char used[256]{};
-        std::vector<tt_t> used_v;
-        std::set<frow_t> fL, fR;
-        auto invest = [&](this auto &&self, uint64_t empty_area, uint64_t mask, uint64_t original, auto &&obj) {
-            if (!(empty_area & mask)) {
-                std::vector<nm_t> nms(4, 0xff);
-                for (auto &&[nm, tt] : std::views::zip(nms, used_v))
-                    nm = tt.nm;
-                std::ranges::sort(nms);
-                obj.emplace(frow_t{
-                        (original & ~empty_area),
-                        ((uint32_t)nms[3] << 24) |
-                        ((uint32_t)nms[2] << 16) |
-                        ((uint32_t)nms[1] <<  8) |
-                        ((uint32_t)nms[0] <<  0) });
+    char used[256]{};
+    std::vector<tt_t> used_v;
+    auto invest = [&](this auto &&self, uint64_t empty_area, uint64_t mask, uint64_t original, auto &&obj) {
+        if (!(empty_area & mask)) {
+            std::vector<nm_t> nms(4, 0xff);
+            for (auto &&[nm, tt] : std::views::zip(nms, used_v))
+                nm = tt.nm;
+            std::ranges::sort(nms);
+            auto island_size = Shape<8>{ empty_area }.sml_island().size();
+            size_t min_m;
+            switch (g_nme->min_m) {
+                case 1: // 0 => 1-piece; 1,2 => 2-pieces
+                    if (nms[0] != 0)
+                        min_m = 1;
+                    else if (nms[1] != 1)
+                        min_m = 2;
+                    else
+                        min_m = 3;
+                    break;
+                case 2: // 0,1 => 2-pieces
+                    if (nms[1] != 1)
+                        min_m = 2;
+                    else
+                        min_m = 3;
+                    break;
+                default:
+                    min_m = g_nme->min_m;
+                    break;
+            }
+            if (island_size && island_size < min_m)
                 return;
-            }
-            auto pos = std::countr_zero(empty_area);
-            for (auto [shape, nm] : fanout[pos]) {
-                if (used[nm]) [[unlikely]]
-                    continue;
-                if (shape & ~empty_area) [[unlikely]]
-                    continue;
-                used[nm] = 1, used_v.push_back({ shape, nm });
-                self(empty_area & ~shape, mask, original, obj);
-                used[nm] = 0, used_v.pop_back();
-            }
-        };
-        auto regularize = [&](std::vector<frow_t> &f, const std::set<frow_t> &fs) {
-            frow_info_t fi;
-            f.reserve(fs.size());
-            for (auto ff : fs)
-                f.emplace_back(ff);
-            fi.data = f.data();
-            for (auto i = 0; i < 5; i++) {
-                fi.sz[i] = std::ranges::upper_bound(f,
-                        0b11111111ull << (8 * i), std::less{}, &frow_t::shape) - f.begin();
-                std::print("/{}", fi.sz[i]);
-            }
-            if (fi.sz[4] != f.size())
-                throw std::runtime_error{ "internal error" };
-            return fi;
-        };
-        std::print("[0b{:08b}] => L", ea);
-        invest(ea | ~0b00001111u, 0b00001111u, ea | ~0b00001111u, fL);
-        frowInfoL[ea] = regularize(frowL[ea], fL);
-        std::print(" R");
-        invest((ea << 4) | ~0b11111111u, 0b11110000u, (ea << 4) | ~0b11111111u, fR);
-        frowInfoR[ea] = regularize(frowL[ea], fR);
+            frow_t fr{ original & ~empty_area };
+            fr.nm[0] = nms[0];
+            fr.nm[1] = nms[1];
+            fr.nm[2] = nms[2];
+            fr.nm[3] = nms[3];
+            obj.emplace(fr);
+            return;
+        }
+        auto pos = std::countr_zero(empty_area);
+        for (auto [shape, nm] : fanout[pos]) {
+            if (used[nm]) [[unlikely]]
+                continue;
+            if (shape & ~empty_area) [[unlikely]]
+                continue;
+            used[nm] = 1, used_v.push_back({ shape, nm });
+            self(empty_area & ~shape, mask, original, obj);
+            used[nm] = 0, used_v.pop_back();
+        }
+    };
+    size_t total_sz[6]{};
+    auto regularize = [&](std::vector<frow_t> &f, const std::set<frow_t> &fs) {
+        frow_info_t fi;
+        f.reserve(fs.size());
+        for (auto ff : fs)
+            f.emplace_back(ff);
+        fi.data = f.data();
+        for (auto i = 0; i < 6; i++) {
+            fi.sz[i] = std::ranges::upper_bound(f,
+                    (1ull << (8 * i + 8)) - 1ull, std::less{}, &frow_t::shape) - f.begin();
+            total_sz[i] += fi.sz[i];
+            std::print("/{}", fi.sz[i]);
+        }
+        if (fi.sz[5] != f.size())
+            throw std::runtime_error{ "internal error" };
+        return fi;
+    };
+    for (auto ea = 0u; ea < 16u; ea++) {
+        std::set<frow_t> f;
+        std::print("[0b1111{:04b}] => L", ea);
+        invest(ea | ~0b00001111ull, 0b00001111ull, ea | ~0b00001111ull, f);
+        frowInfoL[ea] = regularize(frowL[ea], f);
         std::print("\n");
     }
-    std::abort();
+    for (auto ea = 0u; ea < 16u; ea++) {
+        std::set<frow_t> f;
+        std::print("[0b{:04b}0000] => R", ea);
+        invest((ea << 4) | ~0b11111111ull, 0b11110000ull, (ea << 4) | ~0b11111111ull, f);
+        frowInfoR[ea] = regularize(frowR[ea], f);
+        std::print("\n");
+    }
+    for (auto i = 0; i < 6; i++)
+        std::print("sz[{}] = {} = {}KiB\n", i, total_sz[i],
+                total_sz[i] * sizeof(frow_t) / 1024.0);
+    frow_cache(frowInfoL.data(), frowInfoR.data());
 }
 
 uint64_t Searcher::step(Shape<8> empty_area) { /*

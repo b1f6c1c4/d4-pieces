@@ -94,6 +94,29 @@ bool push_nm_d4cmp(uint32_t &nm_cnt, uint32_t old_nm[MAX_PIECESd4], uint32_t new
     return true;
 }
 
+__device__ __forceinline__
+bool push_nm_d4app(uint32_t &nm_cnt, uint32_t old_nm[MAX_PIECESd4], uint32_t new_nm) {
+#pragma unroll
+    for (auto v = 0; v < 4; v++) {
+        auto nm = (new_nm >> 8 * v) & 0xffu;
+        if (nm == 0xffu)
+            break;
+        auto nmx = __byte_perm(new_nm, 0, v << 0 | v << 4 | v << 8 | v << 12);
+        __builtin_assume(nm_cnt < MAX_PIECES);
+#pragma unroll
+        for (auto o = 0; o < MAX_PIECESd4; o++) {
+            if (4 * o >= nm_cnt)
+                break;
+            if (__vcmpeq4(nmx, old_nm[o])) [[unlikely]]
+                return false;
+        }
+        old_nm[nm_cnt / 4] &= ~(0xffu << nm_cnt % 4 * 8);
+        old_nm[nm_cnt / 4] |= nm << nm_cnt % 4 * 8;
+        nm_cnt++;
+    }
+    return true;
+}
+
 template <typename T>
 __device__ __forceinline__
 void report_thr(T *out, uint32_t *n_out, T val) {
@@ -153,6 +176,25 @@ __global__ void check_u8cmp(uint32_t *out, uint32_t *n_out, uint32_t *news) {
     if (!push_nm_u8cmp(nm_cnt, old_nm, news[5 * N_NEWS + idx])) return;
     if (!push_nm_u8cmp(nm_cnt, old_nm, news[6 * N_NEWS + idx])) return;
     if (!push_nm_u8cmp(nm_cnt, old_nm, news[7 * N_NEWS + idx])) return;
+    if constexpr (T)
+        report_thr(out, n_out, nm_cnt);
+    else
+        report_warp(out, n_out, nm_cnt);
+}
+
+template <bool T>
+__global__ void check_d4app(uint32_t *out, uint32_t *n_out, uint32_t *news) {
+    uint32_t nm_cnt{};
+    uint32_t old_nm[MAX_PIECESd4]{ 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu };
+    auto idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[0 * N_NEWS + idx])) return;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[1 * N_NEWS + idx])) return;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[2 * N_NEWS + idx])) return;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[3 * N_NEWS + idx])) return;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[4 * N_NEWS + idx])) return;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[5 * N_NEWS + idx])) return;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[6 * N_NEWS + idx])) return;
+    if (!push_nm_d4app(nm_cnt, old_nm, news[7 * N_NEWS + idx])) return;
     if constexpr (T)
         report_thr(out, n_out, nm_cnt);
     else
@@ -255,6 +297,11 @@ int main(int argc, char *argv[]) {
             check_u8cmp<true><<<N_BLK, N_THR>>>(m_out, d_n_out, d_news);
         else if ("d"s == argv[2])
             check_u8cmp<false><<<N_BLK, N_THR>>>(m_out, d_n_out, d_news);
+    } else if ("d4app"s == argv[1]) {
+        if ("t"s == argv[2])
+            check_d4app<true><<<N_BLK, N_THR>>>(m_out, d_n_out, d_news);
+        else if ("d"s == argv[2])
+            check_d4app<false><<<N_BLK, N_THR>>>(m_out, d_n_out, d_news);
     } else if ("d4cmp"s == argv[1]) {
         if ("t"s == argv[2])
             check_d4cmp<true><<<N_BLK, N_THR>>>(m_out, d_n_out, d_news);

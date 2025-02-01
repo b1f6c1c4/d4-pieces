@@ -9,38 +9,54 @@ struct tt_t {
 };
 struct frow_t {
     uint64_t shape;
-    uint32_t nm0123;
+    union {
+        uint8_t nm[4];
+        uint32_t nm0123;
+    };
 };
 struct frow_info_t {
-    const frow_t *data;
-    uint32_t sz[5];
+    frow_t *data;
+    uint32_t sz[6];
 };
-// ea: 0..15
-void frow_cache(unsigned ea, const frow_t *l, const frow_t *r, size_t llen, size_t rlen);
+void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR);
 
 struct CudaSearcher {
-    explicit CudaSearcher(size_t num_shapes);
+    explicit CudaSearcher(uint64_t empty_area);
     ~CudaSearcher();
-
-    void start_search(uint64_t empty_area);
-    const unsigned char *next();
 
     struct R {
         uint64_t empty_area;
-        uint32_t d;
-        uint32_t ex[7];
+        uint32_t ex[4];
+    };
+    struct C : R {
+        uint32_t height;
     };
 
-private:
-    R *solutions;
-    // n_solutions[0] for device write start
-    // n_solutions[1] for device write finish
-    volatile uint32_t *n_solutions;
-    uint32_t n_solution_processed;
-    size_t n_kernel_invoked;
-    volatile uint32_t *n_pending;
+    [[nodiscard]] uint64_t size() const { return n_solutions; }
+    [[nodiscard]] uint64_t next_size() const { return n_next; }
 
-    void invoke_kernel(const R &regs);
+    void search_CPU1();
+    void search_CPU();
+    void search_GPU();
+
+private:
+    enum mem_t {
+        EMPTY = 0,
+        HOST = 1,
+        DEVICE = 2,
+        ARRAY = 3,
+        UNIFIED = 4
+    };
+    [[nodiscard]] mem_t status() const;
+
+    R *solutions;
+
+    uint32_t height;
+    uint64_t n_solutions;
+    uint64_t n_next;
+
+    void ensure_CPU();
+    void ensure_GPU();
 };
 
 void show_devices();
