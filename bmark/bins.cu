@@ -1,5 +1,6 @@
 #include <cuda.h>
 #include <curand.h>
+#include <algorithm>
 #include <iostream>
 #include <format>
 #include <deque>
@@ -74,7 +75,7 @@ public:
     void commit(size_t n) { used += n; }
     // free up unused pa
     void compact();
-
+    // allocate a contiguous T[n]
     T *get(size_t n) {
         if (ensure(n))
             return vmaps[0].ptr + used;
@@ -159,7 +160,7 @@ map:
     auto ptr = vmaps[0].ptr + offset + mapped;
     C(cuMemMap((CUdeviceptr)ptr, sz * sizeof(T), 0, h, 0));
     C(cuMemSetAccess((CUdeviceptr)ptr, sz * sizeof(T), &adesc, 1));
-    maps.emplace_back(RH{ R{ ptr, sz }, h, unified });
+    maps.emplace_back(RH{ R{ ptr, sz }, h });
     mapped += sz;
     return true;
 }
@@ -189,6 +190,22 @@ void Growable<T>::evict1() {
         C(cuMemSetAccess((CUdeviceptr)src.ptr, src.len * sizeof(T), &adesc, 1));
         used -= src.len;
     }
+}
+
+template <typename T>
+void Growable<T>::compact() {
+    if (maps.empty()) {
+        cleanup();
+        return;
+    }
+    auto beg = std::ranges::lower_bound(maps, maps[0].ptr + used, std::less{}, &RH::ptr);
+    for (auto it = beg; it != maps.end(); it++) {
+        C(cuMemUnmap((CUdeviceptr)it->ptr, it->len * sizeof(T)));
+        mapped -= it->len;
+        C(cuMemRelease(it->h));
+    }
+    maps.erase(beg, maps.end());
+    cleanup();
 }
 
 template <typename T>
@@ -304,8 +321,7 @@ risk-free: {:10} = {}
         std::cout << std::format("  vmaps[0x{:016x}:{:016x}) => {}\n",
                 (ptrdiff_t)vm.ptr, (ptrdiff_t)(vm.ptr + vm.len), display(vm.len * sizeof(T)));
     for (auto rh : maps)
-        std::cout << std::format("  {}maps[0x{:016x}:{:016x}) => {}\n",
-                rh.unified ? 'U' : ' ',
+        std::cout << std::format("    maps[0x{:016x}:{:016x}) => {}\n",
                 (ptrdiff_t)rh.ptr, (ptrdiff_t)(rh.ptr + rh.len), display(rh.len * sizeof(T)));
 }
 
@@ -315,7 +331,7 @@ int main() {
     double sz;
     float *ptr{};
     while (true) {
-        gr.stat();
+        gr.mem_stat();
         if (ptr)
             std::cout << std::format("  ptr => 0x{:016x}\n", (uint64_t)ptr);
         std::cin >> str;
@@ -336,6 +352,8 @@ int main() {
         } else if (str == "en" || str == "e") {
             std::cin >> sz;
             ptr = gr.get((size_t)sz);
+        } else if (str == "x") {
+            gr.compact();
         } else if (str == "e1") {
             gr.evict1();
         } else if (str == "ea") {
