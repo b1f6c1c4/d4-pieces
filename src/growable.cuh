@@ -50,7 +50,7 @@ public:
 
     // return how many T can be written without crash
     [[nodiscard]] size_t risk_free_size() const { return mapped - used; }
-    [[nodiscard]] size_t get_used() const { return used; }
+    [[nodiscard]] size_t get_load() const { return used + evicted; }
     // re-organize all pa mappings s.t. reserved >= offset + new_reserved
     void remap(size_t new_max, bool force = false);
     // mark n of Ts are actually consumed
@@ -66,6 +66,7 @@ public:
 
     // T must have opeartor<
     // returns a unified memory, and the caller needs to free it
+    // clears all used
     R cpu_merge_sort();
 
     void mem_stat() const;
@@ -78,7 +79,7 @@ public:
     void evict1();
 
     // copy all useful data to evicted_data
-    // free up all pa
+    // does NOT free up pa
     void evict_all();
 
     // remove unused vmap
@@ -130,6 +131,9 @@ Growable<T>::~Growable() {
     }
     for (auto v : vmaps)
         C(cuMemAddressFree((CUdeviceptr)v.ptr, v.len * sizeof(T)));
+    for (auto r : evicted_data)
+        delete [] r.ptr;
+    evicted_data.clear();
 }
 
 template <typename T>
@@ -137,8 +141,8 @@ Growable<T>::R Growable<T>::cpu_merge_sort() {
     evict_all();
     R dest{};
     C(cudaMallocManaged(&dest.ptr, evicted * sizeof(T)));
-    C(cudaMemAdvise(dest.ptr, evicted * sizeof(T),
-                cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId));
+    // C(cudaMemAdvise(dest.ptr, evicted * sizeof(T),
+    //             cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId));
     std::vector<std::pair<size_t, size_t>> heap;
     for (auto i = 0u; auto r : evicted_data) {
         heap.emplace_back(i++, 0);
@@ -159,12 +163,16 @@ Growable<T>::R Growable<T>::cpu_merge_sort() {
         else
             std::ranges::push_heap(heap, std::less{}, pproj);
     }
-    int dev;
-    C(cudaGetDevice(&dev));
-    C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
-               cudaMemAdviseSetAccessedBy, dev));
-    C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
-               cudaMemAdviseSetReadMostly, dev));
+    for (auto r : evicted_data)
+        delete [] r.ptr;
+    evicted_data.clear();
+    evicted = 0;
+    // int dev;
+    // C(cudaGetDevice(&dev));
+    // C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
+    //            cudaMemAdviseSetAccessedBy, dev));
+    // C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
+    //            cudaMemAdviseSetReadMostly, dev));
     return dest;
 }
 
@@ -244,27 +252,14 @@ void Growable<T>::compact() {
 
 template <typename T>
 void Growable<T>::evict_all() {
-    if (maps.empty())
+    if (maps.empty() || !used)
         return;
-    if (used) {
-        auto dst = evicted_data.emplace_back(R{ new T[used], used });
-        if (!dst.ptr)
-            throw std::runtime_error{ std::format("new T[{}] failed ({} MiB)", used, used * sizeof(T) / 1048576.0) };
-        C(cudaMemcpy(dst.ptr, maps[0].ptr, used * sizeof(T), cudaMemcpyDeviceToHost));
-        evicted += used;
-        used = 0;
-    }
-    for (auto rh : maps) {
-        C(cuMemUnmap((CUdeviceptr)rh.ptr, rh.len * sizeof(T)));
-        C(cuMemRelease(rh.h));
-    }
-    maps.clear();
-    mapped = 0;
-    for (auto vm : vmaps) {
-        C(cuMemAddressFree((CUdeviceptr)vm.ptr, vm.len * sizeof(T)));
-    }
-    vmaps.clear();
-    reserved = 0;
+    auto dst = evicted_data.emplace_back(R{ new T[used], used });
+    if (!dst.ptr)
+        throw std::runtime_error{ std::format("new T[{}] failed ({} MiB)", used, used * sizeof(T) / 1048576.0) };
+    C(cudaMemcpy(dst.ptr, maps[0].ptr, used * sizeof(T), cudaMemcpyDeviceToHost));
+    evicted += used;
+    used = 0;
 }
 
 template <typename T>

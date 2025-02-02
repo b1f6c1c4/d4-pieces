@@ -168,43 +168,57 @@ void CudaSearcher::free() {
 std::pair<uint64_t, uint32_t> balance(uint64_t n) {
     if (n <= 32)
         return { 1, n };
-    if (n <= 32 * 84)
+    if (n <= 32 * 84 * 3)
         return { (n + 31) / 32, 32 };
-    if (n <= 64 * 84)
+    if (n <= 64 * 84 * 3)
         return { (n + 63) / 64, 64 };
-    if (n <= 96 * 84)
+    if (n <= 96 * 84 * 3)
         return { (n + 95) / 96, 96 };
-    if (n <= 128 * 84)
+    if (n <= 128 * 84 * 3)
         return { (n + 127) / 128, 128 };
-    if (n <= 256 * 84)
+    if (n <= 256 * 84 * 3)
         return { (n + 255) / 256, 256 };
     return { (n + 511) / 512, 512 };
 }
 
 void CudaSearcher::search_GPU(bool fake) {
     Growable<R> grs[256];
-    B *bins;
+    Rg<R> *bins;
     C(cudaMallocManaged(&bins, sizeof(B)));
     C(cudaMemset(bins, 0, sizeof(B)));
     for (auto ipos = 0u; ipos <= 255u; ipos++) {
         auto [ptr, len] = solutions[ipos];
         auto &f0L = h_frowInfoL[ipos >> 0 & 0xfu];
         auto &f0R = h_frowInfoR[ipos >> 4 & 0xfu];
+        auto d_f0L = d_frowDataL[ipos >> 0 & 0xfu];
+        auto d_f0R = d_frowDataR[ipos >> 4 & 0xfu];
         auto szid = min(height - 1, 5);
         auto fanout = (unsigned long long)f0L.sz[szid] * f0R.sz[szid];
-        auto sz = max(min(len * fanout, 1ull << 21), fanout);
-        auto max_n = sz / fanout;
+        auto risk_free = len * fanout;
+        for (auto opos = 0u; opos <= 255u; opos++)
+            risk_free = min(risk_free, (unsigned long long)grs[opos].risk_free_size());
+        auto alloc = len * fanout;
+        alloc = max(risk_free, min(alloc, 16ull * 1048576 / sizeof(R)));
+        auto max_n = max(1ull, alloc / fanout);
+        if (len / max_n > 100)
+            std::cout << std::format("ipos=0b{:08b} len={} max_n={} fanout={} len*fanout*sizeof(R)={}\n",
+                    ipos, len, max_n, fanout, display(len*fanout*sizeof(R)));
         while (len) {
-            auto n = min(max_n, len);
+            auto n = min(len, max_n);
             auto [b, t] = balance(n * fanout);
             for (auto opos = 0u; opos <= 255u; opos++) {
-                (*bins)[opos].ptr = grs[opos].get(n * fanout);
+                bins[opos].ptr = grs[opos].get(alloc);
+                bins[opos].len = 0;
+                if (!bins[opos].ptr)
+                    throw std::runtime_error{ "OOM" };
             }
-            d_row_search<<<b, t>>>(*bins, ptr, n,
-                    f0L.data, f0L.sz[szid],
-                    f0R.data, f0R.sz[szid]);
+            d_row_search<<<b, t>>>(bins, ptr, n,
+                    d_f0L, f0L.sz[szid],
+                    d_f0R, f0R.sz[szid]);
             C(cudaPeekAtLastError());
             C(cudaDeviceSynchronize());
+            for (auto opos = 0u; opos <= 255u; opos++)
+                grs[opos].commit(bins[opos].len);
             len -= n;
         }
     }
