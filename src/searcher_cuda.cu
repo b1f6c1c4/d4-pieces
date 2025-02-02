@@ -2,6 +2,7 @@
 
 #include <cuda.h>
 #include <cuda/atomic>
+#include <cstring>
 #include <iostream>
 #include <format>
 #include <unistd.h>
@@ -92,8 +93,7 @@ bool d_push_nm(uint32_t &nm_cnt, uint32_t old_nm[4], uint32_t new_nm) {
 
 void h_row_search(
         CudaSearcher::R *solutions,
-        std::atomic<uint64_t> &n_solutions,
-        std::atomic<uint64_t> &n_next,
+        unsigned long long *n_solutions_,
         CudaSearcher::C cfg0) {
     auto szid = min(cfg0.height - 1, 5);
     auto &f0L = h_frowInfoL[cfg0.empty_area >> 0 & 0xfu];
@@ -113,22 +113,17 @@ void h_row_search(
             if (cfg.empty_area & 0b11111111u)
                 throw std::runtime_error{ std::format("frow info wrong, at 0b{:08b}", cfg0.empty_area & 0xffu) };
             cfg.empty_area >>= 8;
-            solutions[n_solutions.fetch_add(1, std::memory_order_acquire)] = cfg; // slice
-            if (cfg.height > 1) {
-                auto nszid = min(cfg.height - 2, 5);
-                auto nsz =
-                    h_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
-                    h_frowInfoR[cfg.empty_area >> 4 & 0xfu].sz[nszid];
-                n_next += nsz;
-            }
+            auto pos = cfg.empty_area & 0b11111111u;
+            cuda::atomic_ref n_solutions{ n_solutions_[pos] };
+            solutions[pos][n_solutions.fetch_add(1)] = cfg;
         }
 }
 
+template <bool System = false>
 __global__
 void d_row_search(
-        CudaSearcher::R *solutions,
+        CudaSearcher::R *solutions[256],
         unsigned long long *n_solutions,
-        unsigned long long *n_next,
         CudaSearcher::C cfg) {
     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
     auto szid = min(cfg.height - 1, 5);
@@ -146,14 +141,13 @@ void d_row_search(
     cfg.empty_area &= ~fR.shape;
     __builtin_assume(!(cfg.empty_area & 0b11111111u));
     cfg.empty_area >>= 8;
-    solutions[atomicAdd(n_solutions, 1)] = cfg; // slice
-    if (cfg.height > 1) {
-        auto nszid = min(cfg.height - 2, 5);
-        auto nsz =
-            d_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
-            d_frowInfoR[cfg.empty_area >> 4 & 0xfu].sz[nszid];
-        atomicAdd(n_next, nsz);
-    }
+    auto pos = cfg.empty_area & 0b11111111u;
+    CudaSearcher::R *ptr;
+    if constexpr (System)
+        ptr = solutions[pos] + atomicAdd_system(n_solutions + pos, 1);
+    else
+        ptr = solutions[pos] + atomicAdd(n_solutions + pos, 1);
+    *ptr = cfg; // slice
 }
 
 CudaSearcher::CudaSearcher(uint64_t empty_area)
@@ -177,7 +171,23 @@ void CudaSearcher::free() {
     solutions = nullptr;
 }
 
-void CudaSearcher::search_GPU(mem_t mem) {
+std::pair<uint64_t, uint32_t> balance(uint64_t n) {
+    if (n <= 32)
+        return { 1, n };
+    if (n <= 32 * 84)
+        return { (n + 31) / 32, 32 };
+    if (n <= 64 * 84)
+        return { (n + 63) / 64, 64 };
+    if (n <= 96 * 84)
+        return { (n + 95) / 96, 96 };
+    if (n <= 128 * 84)
+        return { (n + 127) / 128, 128 };
+    if (n <= 256 * 84)
+        return { (n + 255) / 256, 256 };
+    return { (n + 511) / 512, 512 };
+}
+
+void CudaSearcher::search_GPU(mem_t mem, bool fake) {
     ensure_CPU();
     R *solutions;
     switch (mem) {
@@ -194,29 +204,63 @@ void CudaSearcher::search_GPU(mem_t mem) {
     C(cudaMalloc(&n_solutions, sizeof(unsigned long long)));
     C(cudaMalloc(&n_next, sizeof(unsigned long long)));
     for (auto i = 0zu; i < this->n_solutions; i++) {
+        auto [b, t] = balance(next_size(i));
+        d_row_search<<<b, t>>>(
+                solutions, n_solutions, n_next, 
+                C{ this->solutions[i], height });
+        C(cudaPeekAtLastError());
+    }
+    C(cudaDeviceSynchronize());
+    if (!fake) {
+        C(cudaMemcpy(&this->n_solutions, n_solutions, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+        C(cudaMemcpy(&this->n_next, n_next, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+        free();
+        this->solutions = solutions;
+        height--;
+    } else {
+        C(cudaFree(solutions));
+    }
+    C(cudaFree(n_solutions));
+    C(cudaFree(n_next));
+}
+
+void CudaSearcher::search_Mixed(uint64_t threshold, bool fake) {
+    ensure_CPU();
+    R *solutions;
+    C(cudaMallocManaged(&solutions, this->n_next * sizeof(R)));
+    unsigned long long h_n_solutions{}, h_n_next{};
+    unsigned long long *d_n_solutions{}, *d_n_next{};
+    C(cudaMallocManaged(&d_n_solutions, sizeof(unsigned long long)));
+    C(cudaMallocManaged(&d_n_next, sizeof(unsigned long long)));
+    for (auto i = 0zu; i < this->n_solutions; i++) {
         auto ns = next_size(i);
-        if (ns <= 512)
-            d_row_search<<<1, ns>>>(
-                    solutions, n_solutions, n_next, 
+        auto [b, t] = balance(ns);
+        if (ns < threshold)
+            h_row_search<-1ll>(
+                    solutions + this->n_next - 1, &h_n_solutions, &h_n_next, 
                     C{ this->solutions[i], height });
-        else if (ns <= 1536)
-            d_row_search<<<(ns + 32 - 1) / 32, 32>>>(
-                    solutions, n_solutions, n_next, 
-                    C{ this->solutions[i], height });
-        else
-            d_row_search<<<(ns + 512 - 1) / 512, 512>>>(
-                    solutions, n_solutions, n_next, 
+        else 
+            d_row_search<<<b, t>>>(
+                    solutions, d_n_solutions, d_n_next, 
                     C{ this->solutions[i], height });
         C(cudaPeekAtLastError());
     }
     C(cudaDeviceSynchronize());
-    C(cudaMemcpy(&this->n_solutions, n_solutions, sizeof(uint64_t), cudaMemcpyDeviceToHost));
-    C(cudaMemcpy(&this->n_next, n_next, sizeof(uint64_t), cudaMemcpyDeviceToHost));
-    free();
-    this->solutions = solutions;
-    C(cudaFree(n_solutions));
-    C(cudaFree(n_next));
-    height--;
+    if (!fake) {
+        std::memmove(
+                solutions + *d_n_solutions,
+                solutions + this->n_next - h_n_solutions,
+                h_n_solutions * sizeof(unsigned long long));
+        this->n_solutions = h_n_solutions + *d_n_solutions;
+        this->n_next = h_n_next + *d_n_next;
+        free();
+        this->solutions = solutions;
+        height--;
+    } else {
+        C(cudaFree(solutions));
+    }
+    C(cudaFree(d_n_solutions));
+    C(cudaFree(d_n_next));
 }
 
 uint64_t CudaSearcher::next_size(uint64_t i) const {

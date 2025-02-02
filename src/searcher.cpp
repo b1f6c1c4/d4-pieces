@@ -153,13 +153,17 @@ void compute_fast_canonical_form() {
     frow_cache(frowInfoL.data(), frowInfoR.data());
 }
 
-void CudaSearcher::search_CPU1() {
+void CudaSearcher::search_CPU1(bool fake) {
     ensure_CPU();
     auto solutions = new R[n_next];
-    std::atomic<uint64_t> n_solutions{}, n_next{};
+    unsigned long long n_solutions{}, n_next{};
     for (auto i = 0zu; i < this->n_solutions; i++)
-        h_row_search(solutions, n_solutions, n_next,
+        h_row_search(solutions, &n_solutions, &n_next,
                 C{ this->solutions[i], height });
+    if (fake) {
+        delete [] solutions;
+        return;
+    }
     delete [] this->solutions;
     this->solutions = solutions;
     this->n_solutions = n_solutions;
@@ -167,18 +171,22 @@ void CudaSearcher::search_CPU1() {
     height--;
 }
 
-void CudaSearcher::search_CPU() {
+void CudaSearcher::search_CPU(bool fake) {
     ensure_CPU();
     auto solutions = new R[n_next];
-    std::atomic<uint64_t> n_solutions{}, n_next{};
+    unsigned long long n_solutions{}, n_next{};
     boost::basic_thread_pool pool;
     for (auto i = 0zu; i < this->n_solutions; i++)
         boost::async(pool, [&,i] {
-            h_row_search(solutions, n_solutions, n_next,
+            h_row_search(solutions, &n_solutions, &n_next,
                     C{ this->solutions[i], height });
         });
     pool.close();
     pool.join();
+    if (fake) {
+        delete [] solutions;
+        return;
+    }
     delete [] this->solutions;
     this->solutions = solutions;
     this->n_solutions = n_solutions;
@@ -190,10 +198,11 @@ uint64_t Searcher::step(Shape<8> empty_area) {
     std::print("{}CudaSearcher::CudaSearcher(ea={})\n", empty_area.to_string(), empty_area.size());
     CudaSearcher cs{ empty_area.get_value() };
     while (true) {
-        std::print("height={} size={}={}GiB next={}={}GiB \n",
+        std::print("height={} size={}={:.02f}GiB next={}={:.02f}GiB avg={:.1f}x n",
                 cs.get_height(),
                 cs.size(), sizeof(CudaSearcher::R) * cs.size() / 1073741824.0,
-                cs.next_size(), sizeof(CudaSearcher::R) * cs.next_size() / 1073741824.0);
+                cs.next_size(), sizeof(CudaSearcher::R) * cs.next_size() / 1073741824.0,
+                1.0 * cs.next_size() / cs.size());
         switch (cs.status()) {
             case CudaSearcher::EMPTY: std::print("mem=EMPTY\n"); break;
             case CudaSearcher::HOST: std::print("mem=HOST\n"); break;
@@ -201,28 +210,45 @@ uint64_t Searcher::step(Shape<8> empty_area) {
             case CudaSearcher::ARRAY: std::print("mem=ARRAY\n"); break;
             case CudaSearcher::UNIFIED: std::print("mem=UNIFIED\n"); break;
         }
-        std::print(">> (c=CPU1,C=CPUn,g=GPUd,G=GPUu)");
+        std::print(">> (fake )? (cpu [1N]|gpu [du]|mixed <th>)\n");
         std::cout.flush();
-        char ch;
-        std::cin >> ch;
+        std::string str;
+        std::cin >> str;
         if (std::cin.eof())
-            return cs.size();
-        switch (ch) {
-            case 'x':
-                return cs.size();
-            case 'c':
-                cs.search_CPU1();
-                break;
-            case 'C':
-                cs.search_CPU();
-                break;
-            case 'g':
-                cs.search_GPU(CudaSearcher::DEVICE);
-                break;
-            case 'G':
-                cs.search_GPU(CudaSearcher::UNIFIED);
-                break;
+            std::abort();
+        auto fake = false;
+        if (str == "fake") {
+            fake = true;
+            std::cin >> str;
         }
+        auto t1 = std::chrono::steady_clock::now();
+        if (str == "cpu") {
+            std::cin >> str;
+            if (str == "1") {
+                cs.search_CPU1(fake);
+            } else if (str == "n") {
+                cs.search_CPU(fake);
+            }
+        } else if (str == "gpu") {
+            std::cin >> str;
+            if (str == "d") {
+                cs.search_GPU(CudaSearcher::DEVICE, fake);
+            } else if (str == "u") {
+                cs.search_GPU(CudaSearcher::UNIFIED, fake);
+            }
+        } else if (str == "mixed") {
+            uint64_t th;
+            std::cin >> th;
+            cs.search_Mixed(th, fake);
+        }
+        auto t2 = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+        if (us < 1000)
+            std::print("  => complated in {}us\n", us);
+        else if (us < 1000000)
+            std::print("  => complated in {:.2f}ms\n", us / 1e3);
+        else
+            std::print("  => complated in {:.2f}s\n", us / 1e6);
     }
 
     /*

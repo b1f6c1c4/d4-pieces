@@ -1,11 +1,10 @@
+#include "growable.cuh"
+
 #include <cuda.h>
 #include <curand.h>
 #include <algorithm>
-#include <iostream>
 #include <format>
-#include <deque>
-#include <ranges>
-#include <vector>
+#include <iostream>
 
 #define C(ans) { chk_impl((ans), __FILE__, __LINE__); }
 
@@ -35,89 +34,20 @@ static inline void chk_impl(curandStatus_t code, const char *file, int line) {
     }
 }
 
-template <typename T>
-class Growable {
-    struct R {
-        T *ptr;
-        size_t len; // number of T
-    };
-    struct RH : R {
-        CUmemGenericAllocationHandle h;
-    };
-
-    // in units of T
-    std::deque<R> vmaps; // sum(vmaps, &R::len) == reserved
-    size_t reserved; // offset + mapped <= reserved
-    size_t offset;
-    size_t used; // used <= mapped
-    // vmaps[0].ptr + offset == maps[0].ptr
-    std::deque<RH> maps; // sum(maps, &R::len) == mapped
-    size_t mapped;
-    std::vector<R> evicted_data;
-    size_t evicted;
-    size_t chunk; // granularity
-
-    CUmemAllocationProp prop, uprop;
-    CUmemAccessDesc adesc, uadesc;
-
-public:
-    explicit Growable(size_t max = 0);
-    ~Growable();
-
-    static_assert(std::is_trivially_constructible_v<T>, "T not trivially constructible");
-    static_assert(std::is_trivially_copyable_v<T>, "T not trivially copyable");
-
-    // return how many T can be written without crash
-    [[nodiscard]] size_t risk_free_size() const { return mapped - used; }
-    // re-organize all pa mappings s.t. reserved >= offset + new_reserved
-    void remap(size_t new_max, bool force = false);
-    // mark n of Ts are actually consumed
-    void commit(size_t n) { used += n; }
-    // free up unused pa
-    void compact();
-    // allocate a contiguous T[n]
-    T *get(size_t n) {
-        if (ensure(n))
-            return vmaps[0].ptr + used;
-        return nullptr;
-    }
-
-    void mem_stat() const;
-
-    // make sure risk_free_size() >= n, and return the write-start point
-    bool ensure(size_t n);
-
-    // copy all useful data from the 0-th pa to evicted_data
-    // does NOT free up pa
-    void evict1();
-
-    // copy all useful data to evicted_data
-    // free up all pa
-    void evict_all();
-
-    // remove unused vmap
-    void cleanup();
-};
 
 template <typename T>
 Growable<T>::Growable(size_t max)
     : reserved{}, vmaps{}, offset{}, used{}, maps{},
       mapped{}, evicted_data{}, evicted{}, chunk{},
-      prop{}, uprop{}, adesc{}, uadesc{} {
+      prop{}, adesc{} {
 
     int n; C(cudaGetDeviceCount(&n)); // dark magic; don't touch
 
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-    prop.location.id = 0; // TODO
+    C(cudaGetDevice(&prop.location.id));
     adesc.location = prop.location;
     adesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-
-    uprop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-    uprop.location.type = CU_MEM_LOCATION_TYPE_HOST_NUMA;
-    uprop.location.id = 0; // TODO
-    uadesc.location = uprop.location;
-    uadesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
 
     C(cuMemGetAllocationGranularity(&chunk, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
     chunk = (chunk + sizeof(T) - 1) / sizeof(T);
@@ -132,6 +62,41 @@ Growable<T>::~Growable() {
     }
     for (auto v : vmaps)
         C(cuMemAddressFree((CUdeviceptr)v.ptr, v.len * sizeof(T)));
+}
+
+template <typename T>
+Growable<T>::R Growable<T>::cpu_merge_sort() {
+    evict_all();
+    R dest{};
+    int dgpu;
+    C(cudaGetDevice(&dgpu));
+    C(cudaMallocManaged(&dest.ptr, evicted * sizeof(T)));
+    C(cudaMemAdvise(dest.ptr, evicted * sizeof(T),
+                cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId));
+    std::vector<std::pair<size_t, size_t>> heap;
+    for (auto i = 0u; auto r : evicted_data) {
+        heap.emplace_back(i++, 0);
+        std::ranges::sort(r.ptr, r.ptr + r.len, comp, proj);
+    }
+    auto pproj = [&,this](size_t blk, size_t id) {
+        return evicted_data[blk].ptr[id];
+    };
+    while (!heap.empty()) {
+        std::ranges::pop_heap(heap, std::less{}, pproj);
+        auto &[blk, id] = heap.back();
+        auto val = evicted_data[blk].ptr[id];
+        if (!dest.len || dest.ptr[dest.len - 1] != val)
+            dest[dest.len++] = val;
+        if (++id == evicted_data[blk].len)
+            heap.pop_back();
+        else
+            std::ranges::push_heap(heap, std::less{}, pproj);
+    }
+    C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
+               cudaMemAdviseSetAccessedBy, dev));
+    C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
+               cudaMemAdviseSetReadMostly, dev));
+    return dest;
 }
 
 template <typename T>
@@ -325,6 +290,7 @@ risk-free: {:10} = {}
                 (ptrdiff_t)rh.ptr, (ptrdiff_t)(rh.ptr + rh.len), display(rh.len * sizeof(T)));
 }
 
+/*
 int main() {
     Growable<float> gr{};
     std::string str;
@@ -363,3 +329,4 @@ int main() {
         }
     }
 }
+*/
