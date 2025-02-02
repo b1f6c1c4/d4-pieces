@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
-#include "growable.cuh"
+#include <type_traits>
+
+#include "growable.h"
 
 struct tt_t {
     uint64_t shape;
@@ -30,29 +32,29 @@ struct CudaSearcher {
         uint64_t empty_area;
         uint32_t ex[4];
         uint32_t nm_cnt;
+        bool operator==(const CudaSearcher::R &other) const = default;
     };
-    struct C : R {
-        uint32_t height;
-    };
+    using B = std::type_identity_t<Rg<R>[256]>;
 
     [[nodiscard]] uint32_t get_height() const { return height; }
-    [[nodiscard]] uint64_t size() const { return n_solutions; }
-    [[nodiscard]] uint64_t next_size() const { return n_next; }
-    [[nodiscard]] uint64_t next_size(uint64_t i) const;
+    [[nodiscard]] uint64_t size(size_t i) const { return solutions[i].len; }
+    [[nodiscard]] uint64_t size() const {
+        auto cnt = 0ull;
+        for (auto i = 0u; i <= 255u; i++)
+            cnt += size(i);
+        return cnt;
+    }
+    [[nodiscard]] uint64_t next_size() const;
 
-    void search_CPU1(bool fake = false);
-    void search_CPU(bool fake = false);
-    void search_GPU(mem_t mem, bool fake = false);
-    void search_Mixed(uint64_t threshold, bool fake = false);
-
-    [[nodiscard]] mem_t status() const;
+    void search_GPU(bool fake = false);
 
 private:
-    Growable<R> solutions[256];
+    B solutions;
     uint32_t height; // maximum hight stored in solutions
+
+    void free();
 };
 
-void h_row_search(
-        CudaSearcher::R *solutions,
-        unsigned long long *n_solutions_,
-        CudaSearcher::C cfg0);
+bool operator<(const CudaSearcher::R &lhs, const CudaSearcher::R &rhs);
+
+void show_devices();
