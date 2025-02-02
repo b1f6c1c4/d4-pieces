@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 
 struct tt_t {
     uint64_t shape;
@@ -27,19 +28,11 @@ struct CudaSearcher {
     struct R {
         uint64_t empty_area;
         uint32_t ex[4];
+        uint32_t nm_cnt;
     };
     struct C : R {
         uint32_t height;
     };
-
-    [[nodiscard]] uint64_t size() const { return n_solutions; }
-    [[nodiscard]] uint64_t next_size() const { return n_next; }
-
-    void search_CPU1();
-    void search_CPU();
-    void search_GPU();
-
-private:
     enum mem_t {
         EMPTY = 0,
         HOST = 1,
@@ -47,16 +40,33 @@ private:
         ARRAY = 3,
         UNIFIED = 4
     };
+
+    [[nodiscard]] uint32_t get_height() const { return height; }
+    [[nodiscard]] uint64_t size() const { return n_solutions; }
+    [[nodiscard]] uint64_t next_size() const { return n_next; }
+
+    void search_CPU1();
+    void search_CPU();
+    void search_GPU(mem_t mem);
+
     [[nodiscard]] mem_t status() const;
 
-    R *solutions;
+private:
 
-    uint32_t height;
+    R *solutions;
+    uint32_t height; // maximum hight stored in solutions
     uint64_t n_solutions;
     uint64_t n_next;
 
-    void ensure_CPU();
-    void ensure_GPU();
+    void free();
+    void ensure_CPU(); // HOST || UNIFIED
+    [[nodiscard]] uint64_t next_size(uint64_t i) const;
 };
+
+void h_row_search(
+        CudaSearcher::R *solutions,
+        std::atomic<uint64_t> &n_solutions,
+        std::atomic<uint64_t> &n_next,
+        CudaSearcher::C cfg);
 
 void show_devices();

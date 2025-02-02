@@ -333,7 +333,7 @@ int main(int argc, char *argv[]) {
                 */
 
     {
-        auto j = monitor(*sf);
+        // auto j = monitor(*sf);
         if (::getenv("DEBUG") && *::getenv("DEBUG"))
             sf->run1();
         else

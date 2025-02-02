@@ -1,7 +1,7 @@
 #include "searcher_cuda.h"
 
+#include <cuda.h>
 #include <cuda/atomic>
-
 #include <iostream>
 #include <format>
 #include <unistd.h>
@@ -26,11 +26,14 @@
 
 static inline void chk_impl(cudaError_t code, const char *file, int line) {
     if (code != cudaSuccess) {
-        std::cerr << std::format("CUDA: {} @ {}:{}\n", cudaGetErrorString(code), file, line);
+        throw std::runtime_error{
+            std::format("CUDA: {}: {} @ {}:{}\n",
+                    cudaGetErrorName(code), cudaGetErrorString(code),
+                    file, line) };
     }
 }
 
-__host__ static const frow_info_t *h_frowInfoL, *h_frowInfoR;
+static const frow_info_t *h_frowInfoL, *h_frowInfoR;
 __device__ static frow_info_t d_frowInfoL[16], d_frowInfoR[16];
 
 void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
@@ -42,8 +45,8 @@ void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
         C(cudaMalloc(&fR.data, fiR[i].sz[5] * sizeof(frow_t)));
         C(cudaMemcpy(fL.data, fiL[i].data, fiL[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
         C(cudaMemcpy(fR.data, fiR[i].data, fiR[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
-        C(cudaMemcpyToSymbol(d_frowInfoL, fiL, sizeof(frow_info_t), i * sizeof(frow_info_t)));
-        C(cudaMemcpyToSymbol(d_frowInfoR, fiR, sizeof(frow_info_t), i * sizeof(frow_info_t)));
+        C(cudaMemcpyToSymbol(d_frowInfoL, &fL, sizeof(frow_info_t), i * sizeof(frow_info_t)));
+        C(cudaMemcpyToSymbol(d_frowInfoR, &fR, sizeof(frow_info_t), i * sizeof(frow_info_t)));
     }
     C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
     size_t drplc;
@@ -52,7 +55,6 @@ void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
 }
 
 bool h_push_nm(uint32_t &nm_cnt, uint8_t old_nm[16], frow_t &frow) {
-    __builtin_assume(nm_cnt < 16);
     for (auto v = 0; v < 4; v++) {
         auto nm = frow.nm[v];
         if (nm == 0xffu)
@@ -88,182 +90,183 @@ bool d_push_nm(uint32_t &nm_cnt, uint32_t old_nm[4], uint32_t new_nm) {
     return true;
 }
 
-void h_row_search(uint64_t idx,
+void h_row_search(
         CudaSearcher::R *solutions,
-        uint64_t *n_solutions_,
-        uint64_t *n_next_,
-        CudaSearcher::C cfg) {
-    std::atomic_ref n_solutions{ n_solutions_ };
-    std::atomic_ref n_next{ n_next_ };
-    auto szid = min(cfg.height - 1, 5);
-    auto &f0L = h_frowInfoL[cfg.empty_area >> 0 & 0xfu];
-    auto &f0R = h_frowInfoR[cfg.empty_area >> 4 & 0xfu];
-    auto &fL = f0L.data[idx / f0R.sz[szid]];
-    auto &fR = f0R.data[idx % f0R.sz[szid]];
-    if (fL.shape & ~cfg.empty_area) return;
-    if (fR.shape & ~cfg.empty_area) return;
-    if (fL.shape & fR.shape) return;
-    if (!h_push_nm(cfg.nm_cnt, reinterpret_cast<uint8_t *>(cfg.ex), fL)) return;
-    if (!h_push_nm(cfg.nm_cnt, reinterpret_cast<uint8_t *>(cfg.ex), fR)) return;
-    cfg.empty_area &= ~fL.shape;
-    cfg.empty_area &= ~fR.shape;
-    solutions[n_solutions++] = cfg; // slice
-    if (cfg.height > 1) {
-        auto nszid = min(cfg.height - 2, 5);
-        auto nsz = d_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
-            d_frowInfoR[cfg.empty_area >> 0 & 0xfu].sz[nszid];
-        n_next += nsz;
-    }
+        std::atomic<uint64_t> &n_solutions,
+        std::atomic<uint64_t> &n_next,
+        CudaSearcher::C cfg0) {
+    auto szid = min(cfg0.height - 1, 5);
+    auto &f0L = h_frowInfoL[cfg0.empty_area >> 0 & 0xfu];
+    auto &f0R = h_frowInfoR[cfg0.empty_area >> 4 & 0xfu];
+    for (auto iL = 0u; iL < f0L.sz[szid]; iL++)
+        for (auto iR = 0u; iR < f0R.sz[szid]; iR++) {
+            auto cfg = cfg0;
+            auto &fL = f0L.data[iL];
+            auto &fR = f0R.data[iR];
+            if (fL.shape & ~cfg.empty_area) continue;
+            if (fR.shape & ~cfg.empty_area) continue;
+            if (fL.shape & fR.shape) continue;
+            if (!h_push_nm(cfg.nm_cnt, reinterpret_cast<uint8_t *>(cfg.ex), fL)) continue;
+            if (!h_push_nm(cfg.nm_cnt, reinterpret_cast<uint8_t *>(cfg.ex), fR)) continue;
+            cfg.empty_area &= ~fL.shape;
+            cfg.empty_area &= ~fR.shape;
+            if (cfg.empty_area & 0b11111111u)
+                throw std::runtime_error{ std::format("frow info wrong, at 0b{:08b}", cfg0.empty_area & 0xffu) };
+            cfg.empty_area >>= 8;
+            solutions[n_solutions.fetch_add(1, std::memory_order_acquire)] = cfg; // slice
+            if (cfg.height > 1) {
+                auto nszid = min(cfg.height - 2, 5);
+                auto nsz =
+                    h_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
+                    h_frowInfoR[cfg.empty_area >> 4 & 0xfu].sz[nszid];
+                n_next += nsz;
+            }
+        }
 }
 
 __global__
 void d_row_search(
         CudaSearcher::R *solutions,
-        uint64_t *n_solutions,
-        uint64_t *n_next,
+        unsigned long long *n_solutions,
+        unsigned long long *n_next,
         CudaSearcher::C cfg) {
-     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
-     auto szid = min(cfg.height - 1, 5);
-     auto &f0L = d_frowInfoL[cfg.empty_area >> 0 & 0xfu];
-     auto &f0R = d_frowInfoR[cfg.empty_area >> 4 & 0xfu];
-     auto &fL = f0L.data[idx / f0R.sz[szid]];
-     auto &fR = f0R.data[idx % f0R.sz[szid]];
-     if (fL.shape & ~cfg.empty_area) return;
-     if (fR.shape & ~cfg.empty_area) return;
-     if (fL.shape & fR.shape) return;
-     if (!d_push_nm(cfg.nm_cnt, cfg.ex, fL.nm0123)) return;
-     if (!d_push_nm(cfg.nm_cnt, cfg.ex, fR.nm0123)) return;
-     cfg.empty_area &= ~fL.shape;
-     cfg.empty_area &= ~fR.shape;
-     solutions[atomicAdd(n_solutions, 1)] = cfg; // slice
-     if (cfg.height > 1) {
-         auto nszid = min(cfg.height - 2, 5);
-         auto nsz = d_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
-             d_frowInfoR[cfg.empty_area >> 0 & 0xfu].sz[nszid];
-         atomicAdd(n_next, nsz);
-     }
+    auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
+    auto szid = min(cfg.height - 1, 5);
+    auto &f0L = d_frowInfoL[cfg.empty_area >> 0 & 0xfu];
+    auto &f0R = d_frowInfoR[cfg.empty_area >> 4 & 0xfu];
+    if (idx >= f0L.sz[szid] * f0R.sz[szid]) return;
+    auto &fL = f0L.data[idx / f0R.sz[szid]];
+    auto &fR = f0R.data[idx % f0R.sz[szid]];
+    if (fL.shape & ~cfg.empty_area) return;
+    if (fR.shape & ~cfg.empty_area) return;
+    if (fL.shape & fR.shape) return;
+    if (!d_push_nm(cfg.nm_cnt, cfg.ex, fL.nm0123)) return;
+    if (!d_push_nm(cfg.nm_cnt, cfg.ex, fR.nm0123)) return;
+    cfg.empty_area &= ~fL.shape;
+    cfg.empty_area &= ~fR.shape;
+    __builtin_assume(!(cfg.empty_area & 0b11111111u));
+    cfg.empty_area >>= 8;
+    solutions[atomicAdd(n_solutions, 1)] = cfg; // slice
+    if (cfg.height > 1) {
+        auto nszid = min(cfg.height - 2, 5);
+        auto nsz =
+            d_frowInfoL[cfg.empty_area >> 0 & 0xfu].sz[nszid] *
+            d_frowInfoR[cfg.empty_area >> 4 & 0xfu].sz[nszid];
+        atomicAdd(n_next, nsz);
+    }
 }
 
 CudaSearcher::CudaSearcher(uint64_t empty_area)
-    : height{ 8 }, n_solutions{ 1 }, solutions{
-        new R[]{ empty_area, { ~0u, ~0u, ~0u, ~0u } } {
+    : solutions{ new R[]{ empty_area, { ~0u, ~0u, ~0u, ~0u } } },
+      height{ (std::bit_width(empty_area) + 8u - 1u) / 8u },
+      n_solutions{ 1 },
+      n_next{ next_size(0) } {
     if (status() != HOST)
         throw std::runtime_error{ "new solutions weird" };
 }
 
 CudaSearcher::~CudaSearcher() {
+    free();
+}
+
+void CudaSearcher::free() {
     if (status() == HOST)
         delete [] solutions;
     else
         C(cudaFree(solutions));
+    solutions = nullptr;
 }
 
-void CudaSearcher::search_CPU1() {
+void CudaSearcher::search_GPU(mem_t mem) {
     ensure_CPU();
+    R *solutions;
+    switch (mem) {
+        case DEVICE:
+            C(cudaMalloc(&solutions, this->n_next * sizeof(R)));
+            break;
+        case UNIFIED:
+            C(cudaMallocManaged(&solutions, this->n_next * sizeof(R)));
+            break;
+        default:
+            throw std::runtime_error{ "invalid mem_t" };
+    }
+    unsigned long long *n_solutions{}, *n_next{};
+    C(cudaMalloc(&n_solutions, sizeof(unsigned long long)));
+    C(cudaMalloc(&n_next, sizeof(unsigned long long)));
+    for (auto i = 0zu; i < this->n_solutions; i++) {
+        auto ns = next_size(i);
+        if (ns <= 512)
+            d_row_search<<<1, ns>>>(
+                    solutions, n_solutions, n_next, 
+                    C{ this->solutions[i], height });
+        else if (ns <= 1536)
+            d_row_search<<<(ns + 32 - 1) / 32, 32>>>(
+                    solutions, n_solutions, n_next, 
+                    C{ this->solutions[i], height });
+        else
+            d_row_search<<<(ns + 512 - 1) / 512, 512>>>(
+                    solutions, n_solutions, n_next, 
+                    C{ this->solutions[i], height });
+        C(cudaPeekAtLastError());
+    }
+    C(cudaDeviceSynchronize());
+    C(cudaMemcpy(&this->n_solutions, n_solutions, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+    C(cudaMemcpy(&this->n_next, n_next, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+    free();
+    this->solutions = solutions;
+    C(cudaFree(n_solutions));
+    C(cudaFree(n_next));
     height--;
-    auto solutions = new R[n_next];
-    uint64_t n_solutions{}, n_next{};
-    for (auto i = 0zu; i < this->n_solutions; i++)
-        h_row_search(i, solutions, &n_solutions, &n_next,
-                C{ this->solutions[i], height });
 }
 
-    C(cudaMallocManaged(&solutions, MAX_SOLUTIONS * sizeof(R)));
-    C(cudaMallocManaged(&n_solutions, 2 * sizeof(n_solutions)));
-    C(cudaMallocManaged(&n_pending, sizeof(n_pending)));
-    C(cudaFree(const_cast<uint32_t *>(n_solutions)));
-    C(cudaFree(const_cast<uint32_t *>(n_pending)));
-mem_t CudaSearcher::status() const {
+uint64_t CudaSearcher::next_size(uint64_t i) const {
+    auto ea = solutions[i].empty_area;
+    auto nszid = min(height - 2, 5);
+    return
+        h_frowInfoL[ea >> 0 & 0xfu].sz[nszid] *
+        h_frowInfoR[ea >> 4 & 0xfu].sz[nszid];
+}
+
+void CudaSearcher::ensure_CPU() {
+    switch (status()) {
+        case HOST:
+        case UNIFIED:
+            return;
+        case DEVICE:
+            break;
+        default:
+            throw std::runtime_error{ "invalid mem_t" };
+    }
+    auto solutions = new R[n_solutions];
+    C(cudaMemcpy(solutions, this->solutions, n_solutions * sizeof(R), cudaMemcpyDeviceToHost));
+    C(cudaFree(this->solutions));
+    this->solutions = solutions;
+}
+
+CudaSearcher::mem_t CudaSearcher::status() const {
     if (!solutions)
         return EMPTY;
-    CUmemorytype ret;
-    C(cuPointerGetAttribute(&ret, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, solutions));
-    return static_cast<mem_t>(ret);
-}
-
-void CudaSearcher::invoke_kernel(const R &args) {
-    (void)args;
-    /*
-    for (auto wait = 1u; ; wait = wait >= 1000000u ? 1000000u : 2 * wait) {
-        auto fcf_threads = h_fcfs[std::countr_zero(args.empty_area)];
-        auto err = cudaSuccess;
-#define INV(D) \
-        if (args.d == D) { \
-            searcher_impl<D><<<1, fcf_threads>>>( \
-                args.empty_area, solutions, \
-                const_cast<uint32_t *>(n_solutions), \
-                const_cast<uint32_t *>(n_pending), \
-                args.ex[0], args.ex[1], args.ex[2], args.ex[3], \
-                args.ex[4], args.ex[5], args.ex[6]); \
-            err = cudaPeekAtLastError(); }
-        // INV( 0) INV( 1) INV( 2) INV( 3)
-        // INV( 4) INV( 5) INV( 6) INV( 7)
-        // INV( 8) INV( 9) INV(10) INV(11)
-        // INV(12) INV(13) INV(14) INV(15)
-        // INV(16) INV(17) INV(18) INV(19)
-        // INV(20) INV(21) INV(22) INV(23)
-        // INV(24) INV(25) INV(26) INV(27)
-#undef INV
-        if (err == cudaErrorLaunchPendingCountExceeded) {
-            std::cerr << '.';
-            continue;
-        }
-        C(err);
-        // no need to worry about ordering - we are the host thread
-        cuda::atomic_ref pd{ *const_cast<uint32_t *>(n_pending) };
-        auto p = pd += fcf_threads;
-        std::cerr << std::format("p={:10} D{:2} ea{:02} <<<1, {}>>> k={}\n",
-                p, args.d, std::popcount(args.empty_area), fcf_threads, n_kernel_invoked);
-        return;
+    int ret;
+    auto res = cuPointerGetAttribute(&ret,
+                CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
+                (CUdeviceptr)solutions);
+    switch (res) {
+        case CUDA_SUCCESS:
+            return static_cast<mem_t>(ret);
+        case CUDA_ERROR_DEINITIALIZED:
+            throw std::runtime_error{ "cuPointerGetAttribute failed: deinitialized" };
+        case CUDA_ERROR_NOT_INITIALIZED:
+            throw std::runtime_error{ "cuPointerGetAttribute failed: not initialized" };
+        case CUDA_ERROR_INVALID_CONTEXT:
+            throw std::runtime_error{ "cuPointerGetAttribute failed: invalid context" };
+        case CUDA_ERROR_INVALID_VALUE:
+            return HOST;
+            // throw std::runtime_error{ "cuPointerGetAttribute failed: invalid value" };
+        case CUDA_ERROR_INVALID_DEVICE:
+            throw std::runtime_error{ "cuPointerGetAttribute failed: invalid device" };
+        default:
+            throw std::runtime_error{ "cuPointerGetAttribute failed" };
     }
-    */
-}
-
-const unsigned char *CudaSearcher::next() {
-    return nullptr;
-    /*
-    auto flag = false;
-    // auto old_val = 0u;
-    // auto o = *n_pending;
-    while (true) {
-    // for (auto wait = 1u; ; wait = wait >= 1000000u ? 1000000u : 2 * wait) {
-        auto curr = n_solutions[1];
-    again:
-        if (curr > n_solution_processed) {
-            auto &ret = solutions[n_solution_processed++ % MAX_SOLUTIONS];
-            if (ret.d == 0x5555aaaau) {
-                auto err = static_cast<cudaError_t>(ret.empty_area);
-                throw std::runtime_error{ std::format("{} at #{}: {}",
-                        cudaGetErrorName(err), curr, cudaGetErrorString(err)) };
-            } else if (ret.d == 0xaaaa5555u) {
-                std::cerr << std::format("ret.empty_area = 0x{:016x}\n", ret.empty_area);
-                for (auto i = 0; i < 7; i++)
-                    std::cerr << std::format("ret.ex[{0}] = 0x{1:08x} = {1}\n", i, ret.ex[i]);
-                std::cerr << std::format("ret.d = 0x{:08x}\n", ret.d);
-                throw std::runtime_error{ "other error" };
-            } else if (ret.empty_area) {
-                invoke_kernel(ret);
-                flag = false;
-                goto again;
-            }
-            return reinterpret_cast<unsigned char *>(ret.ex);
-        }
-        if (flag)
-            return nullptr;
-        auto val = *n_pending;
-        if (!val) {
-            flag = true;
-            continue;
-        }
-        // if (wait >= 10000000u && val != old_val) {
-        //     std::cerr << std::format("waiting, n_pending = {}\n", val);
-        //     old_val = val;
-        // }
-        // usleep(wait);
-        usleep(10000);
-        std::cerr << std::format("waiting, n_pending = {}\n", val);
-    }
-    */
 }
 
 void show_devices() {

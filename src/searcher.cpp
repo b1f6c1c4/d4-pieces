@@ -5,6 +5,7 @@
 #include <bit>
 #include <compare>
 #include <set>
+#include <iostream>
 #include <print>
 #include <chrono>
 
@@ -152,7 +153,79 @@ void compute_fast_canonical_form() {
     frow_cache(frowInfoL.data(), frowInfoR.data());
 }
 
-uint64_t Searcher::step(Shape<8> empty_area) { /*
+void CudaSearcher::search_CPU1() {
+    ensure_CPU();
+    auto solutions = new R[n_next];
+    std::atomic<uint64_t> n_solutions{}, n_next{};
+    for (auto i = 0zu; i < this->n_solutions; i++)
+        h_row_search(solutions, n_solutions, n_next,
+                C{ this->solutions[i], height });
+    delete [] this->solutions;
+    this->solutions = solutions;
+    this->n_solutions = n_solutions;
+    this->n_next = n_next;
+    height--;
+}
+
+void CudaSearcher::search_CPU() {
+    ensure_CPU();
+    auto solutions = new R[n_next];
+    std::atomic<uint64_t> n_solutions{}, n_next{};
+    boost::basic_thread_pool pool;
+    for (auto i = 0zu; i < this->n_solutions; i++)
+        boost::async(pool, [&,i] {
+            h_row_search(solutions, n_solutions, n_next,
+                    C{ this->solutions[i], height });
+        });
+    pool.close();
+    pool.join();
+    delete [] this->solutions;
+    this->solutions = solutions;
+    this->n_solutions = n_solutions;
+    this->n_next = n_next;
+    height--;
+}
+
+uint64_t Searcher::step(Shape<8> empty_area) {
+    std::print("{}CudaSearcher::CudaSearcher(ea={})\n", empty_area.to_string(), empty_area.size());
+    CudaSearcher cs{ empty_area.get_value() };
+    while (true) {
+        std::print("height={} size={}={}GiB next={}={}GiB \n",
+                cs.get_height(),
+                cs.size(), sizeof(CudaSearcher::R) * cs.size() / 1073741824.0,
+                cs.next_size(), sizeof(CudaSearcher::R) * cs.next_size() / 1073741824.0);
+        switch (cs.status()) {
+            case CudaSearcher::EMPTY: std::print("mem=EMPTY\n"); break;
+            case CudaSearcher::HOST: std::print("mem=HOST\n"); break;
+            case CudaSearcher::DEVICE: std::print("mem=DEVICE\n"); break;
+            case CudaSearcher::ARRAY: std::print("mem=ARRAY\n"); break;
+            case CudaSearcher::UNIFIED: std::print("mem=UNIFIED\n"); break;
+        }
+        std::print(">> (c=CPU1,C=CPUn,g=GPUd,G=GPUu)");
+        std::cout.flush();
+        char ch;
+        std::cin >> ch;
+        if (std::cin.eof())
+            return cs.size();
+        switch (ch) {
+            case 'x':
+                return cs.size();
+            case 'c':
+                cs.search_CPU1();
+                break;
+            case 'C':
+                cs.search_CPU();
+                break;
+            case 'g':
+                cs.search_GPU(CudaSearcher::DEVICE);
+                break;
+            case 'G':
+                cs.search_GPU(CudaSearcher::UNIFIED);
+                break;
+        }
+    }
+
+    /*
     auto cnt = 0ull;
     // find all shapes covering the first empty block while also fits
     CudaSearcher cs{ g_nme->size_pieces() };
