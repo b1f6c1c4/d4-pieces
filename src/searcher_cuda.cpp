@@ -11,7 +11,8 @@ Sorter::Sorter(CudaSearcher &p)
     : parent{ p },
       total{ std::min(std::thread::hardware_concurrency(), 256u) },
       threads{}, mtx{}, cv{}, cv_push{}, pending{ 0 },
-      queue{}, batch{}, closed{} {
+      queue{}, batch{}, closed{},
+      dedup_size{}, orig_size{} {
     auto k = 0;
     for (auto i = 0u; i < total; i++) {
         auto n = i < 256 % total ? (256 + total - 1) / total : 256 / total;
@@ -66,8 +67,12 @@ void Sorter::push(std::vector<Rg<R>> &&cont) {
     pending += 256;
     for (auto r : queue)
         delete [] r.ptr;
+    auto orig_to_report = 0ull;
+    for (auto r : cont)
+        orig_to_report += r.len;
     queue = std::move(cont);
     batch++;
+    orig_size += orig_to_report;
     lock.unlock();
     cv.notify_all();
 }
@@ -81,12 +86,10 @@ void Sorter::thread_entry(int pos, int n) {
 
     std::vector<std::unordered_set<R>> sets(n);
 
-    std::vector<size_t> count(n, 0zu);
-    auto total = 0ull;
     std::vector<Rg<R>> local_copy;
     uint64_t last{};
+    std::unique_lock lock{ mtx };
     while (true) {
-        std::unique_lock lock{ mtx };
         cv.wait(lock, [=,this]{ return batch > last || closed; });
         if (batch > last + 1)
             throw std::runtime_error{ "missing batch" };
@@ -94,24 +97,35 @@ void Sorter::thread_entry(int pos, int n) {
             local_copy = queue; // copy
         auto cls = closed;
         lock.unlock();
+        auto dedup_to_report = 0ull;
         for (auto r : local_copy) {
             for (auto &set : sets)
                 set.reserve(set.size() + r.len / 200);
             for (auto i = 0ull; i < r.len; i++) {
                 auto p = (r.ptr[i].empty_area & 0xffu);
                 if (p >= pos && p < pos + n) [[unlikely]] {
-                    sets[p - pos].emplace(r.ptr[i]);
-                    count[p - pos]++;
+                    if (sets[p - pos].emplace(r.ptr[i]).second)
+                        dedup_to_report++;
                 }
             }
-            total += r.len;
         }
         local_copy.clear();
-        if (cls)
+        if (cls) {
+            if (dedup_to_report) {
+                lock.lock();
+                dedup_size += dedup_to_report;
+                lock.unlock();
+            }
             break;
+        }
         last++;
         lock.lock();
+        dedup_size += dedup_to_report;
         pending -= n;
+        if (pending == 0) { // I am the last - report!
+            std::print(std::cerr, "sorter: {}/{} sorted ({:.01f}x)\n",
+                    dedup_size, orig_size, 1.0 * orig_size / dedup_size);
+        }
         cv_push.notify_one();
     }
 
@@ -121,8 +135,6 @@ void Sorter::thread_entry(int pos, int n) {
             parent.write_solution(p, 0zu);
             continue;
         }
-        std::print(std::cerr, "sorter#0x{:02x}: {:8}/{:9}/{} sorted ({:.01f}x)\n", p,
-                set.size(), count[p - pos], total, 1.0 * count[p - pos] / set.size());
         auto r = parent.write_solution(p, set.size());
         for (auto i = 0zu; auto &v : set)
             r.ptr[i++] = v;

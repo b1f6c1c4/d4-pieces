@@ -56,6 +56,8 @@ private:
     uint64_t                 batch;
     bool                     closed;
 
+    uint64_t dedup_size, orig_size;
+
     void thread_entry(int i, int n);
 };
 
@@ -80,9 +82,10 @@ struct CudaSearcher {
         return cnt;
     }
 
-    void search_GPU();
+    void search_GPU(bool sort);
 
     Rg<R> write_solution(unsigned pos, size_t sz);
+    Rg<R> *write_solutions(size_t sz);
 
 private:
     Rg<R> solutions[256];

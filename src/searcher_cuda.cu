@@ -8,6 +8,7 @@
 #include <memory>
 #include <iostream>
 #include <format>
+#include <optional>
 #include <unistd.h>
 #include <cstdio>
 
@@ -75,7 +76,7 @@ void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
     }
 }
 
-#define CYC_CHUNK (128ull * 1048576ull / sizeof(R))
+#define CYC_CHUNK (256ull * 1048576ull / sizeof(R))
 
 __global__
 void d_row_search(
@@ -156,7 +157,7 @@ std::pair<uint64_t, uint32_t> balance(uint64_t n) {
     return { (n + 511) / 512, 512 };
 }
 
-#define VMEM_SZ ((1zu << 45) / sizeof(R))
+#define VMEM_SZ ((70zu << 40) / sizeof(R))
 
 struct Device {
     int dev;
@@ -182,7 +183,7 @@ struct Device {
         n_completed_chunks.store(0, cuda::memory_order_release);
 
         C(cudaSetDevice(d));
-        C(cudaStreamCreate(&stream));
+        C(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
         C(cudaMallocAsync(&n_bins, sizeof(unsigned long long), stream));
         unsigned long long zero{};
         C(cudaMemcpyAsync(n_bins, &zero, sizeof(zero), cudaMemcpyHostToDevice, stream));
@@ -190,16 +191,18 @@ struct Device {
         std::cout << std::format("dev#{}: map {}B of vmem, then fill it with {}B chunks\n",
                 dev, display(vmem_free * sizeof(R)), display(CYC_CHUNK * sizeof(R)));
         gr = std::make_unique<Growable<R>>(d, vmem_free, CYC_CHUNK);
-        auto k = 0;
-        for (; k < 180; k++) {
-            if (auto p = gr->get(CYC_CHUNK * k); p)
-                bins = p;
+        auto k = 0u;
+        for (auto i = 1u; i <= 90u; i++) {
+            auto p = gr->get(CYC_CHUNK * i);
+            if (p)
+                bins = p, k = i;
             else
                 break;
         }
         n_available_chunks.fetch_add(k, cuda::memory_order_release);
         std::cout << std::format("dev#{}: {} * {}B = {}B of mem ({}) mapped\n",
                 dev, k, display(CYC_CHUNK * sizeof(R)), display(k * CYC_CHUNK * sizeof(R)), k * CYC_CHUNK);
+        gr->mem_stat();
     }
 
     ~Device() {
@@ -236,7 +239,7 @@ struct Device {
                 dev, pos, b, t, len, fanoutL, fanoutR, display(sizeof(R)),
                 display(sz * sizeof(R)), display((vmem_free - sz) * sizeof(R)));
         C(cudaSetDevice(dev));
-        C(cudaStreamAttachMemAsync(stream, ptr, len * sizeof(R)));
+        // FIXME: C(cudaStreamAttachMemAsync(stream, ptr, len * sizeof(R)));
         C(cudaMemPrefetchAsync(ptr, len * sizeof(R), dev, stream));
         d_row_search<<<b, t, 0, stream>>>(bins, n_bins,
                 &counters[0], &counters[1],
@@ -246,7 +249,7 @@ struct Device {
         vmem_free -= sz;
     }
 
-    void collect(Sorter &sorter, bool force = false) {
+    void recycle(bool last) {
         cuda::atomic_ref n_available_chunks{ counters[0] };
         cuda::atomic_ref n_completed_chunks{ counters[1] };
         auto completed = n_completed_chunks.load(cuda::memory_order_acquire);
@@ -259,42 +262,60 @@ struct Device {
             std::cout << std::format("dev#{}: recycle col={}/cpl={}/avl={} (+{} {}B) chunks\n",
                     dev, n_collected_chunks, completed, n + 1,
                     k, display(k * CYC_CHUNK * sizeof(R)));
-        }
-        if (!force) {
-            if (!gr->get_load() || !sorter.ready())
-                return;
-            std::cout << std::format("dev#{}: pushing {} entries to sorter ({}B)\n",
-                    dev, gr->get_load(), display(gr->get_load() * sizeof(R)));
-            sorter.push(gr->remove_data());
-            if (gr->get_load()) {
-                gr->mem_stat();
-                throw std::runtime_error{ std::format("internal error at dev#{} col={}/cpl={} (+{} {}B) chunks\n",
-                        dev, n_collected_chunks, completed,
-                        k, display(k * CYC_CHUNK * sizeof(R))) };
-            }
-            return;
+            if (!last) break; // FIXME
         }
 
-        std::cout << std::format("dev#{}: synchronize\n", dev);
-        C(cudaSetDevice(dev));
-        unsigned long long used;
-        C(cudaStreamSynchronize(stream)); // necessary as kernels may be still finishing
-        C(cudaMemcpyAsync(&used, n_bins, sizeof(used), cudaMemcpyDeviceToHost, stream));
-        C(cudaStreamSynchronize(stream));
-        if (used < n_collected_chunks * CYC_CHUNK)
-            throw std::runtime_error{ "internal error" };
-        if (used == n_collected_chunks * CYC_CHUNK)
+        if (last) {
+            std::cout << std::format("dev#{}: synchronize\n", dev);
+            C(cudaSetDevice(dev));
+            unsigned long long used;
+            C(cudaStreamSynchronize(stream)); // necessary as kernels may be still finishing
+            C(cudaMemcpyAsync(&used, n_bins, sizeof(used), cudaMemcpyDeviceToHost, stream));
+            C(cudaStreamSynchronize(stream));
+            if (used < n_collected_chunks * CYC_CHUNK)
+                throw std::runtime_error{ "internal error" };
+            if (used == n_collected_chunks * CYC_CHUNK)
+                return;
+            gr->commit(used - n_collected_chunks * CYC_CHUNK);
+            gr->evict_all();
+        }
+    }
+
+    void collect(Sorter &sorter, bool last) {
+        if (!gr->get_load())
             return;
-        gr->commit(used - n_collected_chunks * CYC_CHUNK);
-        gr->evict_all();
-        std::cout << std::format("dev#{}: pushing last {} entries to sorter ({}B)\n",
+        if (!last && !sorter.ready())
+            return;
+
+        std::cout << std::format("dev#{}: pushing {} entries to dedup sorter ({}B)\n",
                 dev, gr->get_load(), display(gr->get_load() * sizeof(R)));
+
         sorter.push(gr->remove_data());
+    }
+
+    void collect(CudaSearcher &parent, bool last) {
+        if (!gr->get_load())
+            return;
+        if (!last)
+            return;
+
+        std::cout << std::format("dev#{}: pushing {} entries to direct sorter ({}B)\n",
+                dev, gr->get_load(), display(gr->get_load() * sizeof(R)));
+
+        auto sol = parent.write_solutions(gr->get_load());
+        auto &&d = gr->remove_data();
+        for (auto [ptr, len] : d)
+            for (auto i = 0ull; i < len; i++) {
+                auto pos = ptr[i].empty_area & 0xffu;
+                sol[pos].ptr[sol[pos].len++] = ptr[i];
+            }
     }
 };
 
-void CudaSearcher::search_GPU() {
-    Sorter sorter{ *this };
+void CudaSearcher::search_GPU(bool sort) {
+    std::optional<Sorter> sorter;
+    if (sort)
+        sorter.emplace(*this);
     std::vector<std::unique_ptr<Device>> devs;
     for (auto i = 0; i < n_devices; i++)
         devs.emplace_back(std::make_unique<Device>(i));
@@ -304,21 +325,30 @@ void CudaSearcher::search_GPU() {
             return dev->vmem_free;
         });
         devs.front()->dispatch(ipos, height, solutions[ipos]);
-        for (auto &dev : devs)
-            dev->collect(sorter);
+        for (auto &dev : devs) {
+            dev->recycle(false);
+            if (sort) dev->collect(*sorter, false);
+            else dev->collect(*this, false);
+        }
     }
     bool flag;
     do {
         flag = true;
         for (auto &dev : devs) {
             flag &= dev->completed();
-            dev->collect(sorter);
+            dev->recycle(false);
+            if (sort) dev->collect(*sorter, false);
+            else dev->collect(*this, false);
         }
     } while (!flag);
-    for (auto &dev : devs)
-        dev->collect(sorter, true);
+    for (auto &dev : devs) {
+        dev->recycle(true);
+        if (sort) dev->collect(*sorter, true);
+        else dev->collect(*this, true); // TODO: multiple GPU direct collect
+    }
     devs.clear();
-    sorter.join();
+    if (sort)
+        sorter->join();
     height--;
 }
 
@@ -339,6 +369,17 @@ Rg<R> CudaSearcher::write_solution(unsigned pos, size_t sz) {
         C(cudaMallocManaged(&r.ptr, sz * sizeof(R), cudaMemAttachHost));
     r.len = sz;
     return r;
+}
+
+Rg<R> *CudaSearcher::write_solutions(size_t sz) {
+    for (auto pos = 0; pos <= 255; pos++) {
+        auto &[ptr, len] = solutions[pos];
+        if (ptr) C(cudaFree(ptr));
+        ptr = nullptr;
+        len = 0;
+        C(cudaMallocManaged(&ptr, sz * sizeof(R), cudaMemAttachHost));
+    }
+    return solutions;
 }
 
 void show_devices() {
