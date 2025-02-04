@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include <format>
 
 inline std::string display(uint64_t byte) {
     if (byte < 1000ull)

@@ -9,8 +9,6 @@
 #include <thread>
 #include <vector>
 
-#include "growable.h"
-
 #include <boost/unordered/concurrent_flat_set_fwd.hpp>
 
 struct tt_t {
@@ -37,6 +35,12 @@ struct R {
     bool operator==(const R &other) const = default;
 };
 
+template <typename T>
+struct Rg {
+    T *ptr;
+    unsigned long long len; // number of T
+};
+
 struct CudaSearcher;
 namespace boost::executors { class basic_thread_pool; }
 struct CSR;
@@ -44,7 +48,7 @@ struct Sorter {
     explicit Sorter(CudaSearcher &p);
     ~Sorter();
 
-    void push(std::vector<Rg<R>> &&cont);
+    void push(Rg<R> r);
     void join();
 
 private:
@@ -75,7 +79,7 @@ struct CudaSearcher {
         return cnt;
     }
 
-    void search_GPU(bool sort);
+    void search_GPU();
 
     Rg<R> write_solution(unsigned pos, size_t sz);
     Rg<R> *write_solutions(size_t sz);

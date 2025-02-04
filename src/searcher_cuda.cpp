@@ -55,27 +55,21 @@ void Sorter::join() {
     }
 }
 
-void Sorter::push(std::vector<Rg<R>> &&cont) {
-    if (cont.empty())
-        return;
-
-    for (auto r : cont)
-        boost::async(*pool, [this, r]{
-            auto [ptr, len] = r;
-            auto local = 0zu;
-            for (auto i = 0zu; i < len; i++) {
-                auto pos = ptr[i].empty_area & 0xffu;
-                if (sets[pos].insert(ptr[i]))
-                    local++;
-            }
-            std::atomic_ref atm_d{ dedup };
-            std::atomic_ref atm_n{ total };
-            auto d = atm_d.fetch_add(local, std::memory_order_relaxed) + local;
-            auto n = atm_n.fetch_add(len, std::memory_order_relaxed) + len;
-            std::print("sorter: {}/{} = {}B ({:.2f}x)\n",
-                    d, n, display(d * sizeof(R)), 1.0 * n / d);
-            delete [] ptr;
-        });
-
-    cont.clear();
+void Sorter::push(Rg<R> r) {
+    boost::async(*pool, [this, r]{
+        auto [ptr, len] = r;
+        auto local = 0zu;
+        for (auto i = 0zu; i < len; i++) {
+            auto pos = ptr[i].empty_area & 0xffu;
+            if (sets[pos].insert(ptr[i]))
+                local++;
+        }
+        std::atomic_ref atm_d{ dedup };
+        std::atomic_ref atm_n{ total };
+        auto d = atm_d.fetch_add(local, std::memory_order_relaxed) + local;
+        auto n = atm_n.fetch_add(len, std::memory_order_relaxed) + len;
+        std::print("sorter: {}/{} = {}B ({:.2f}x)\n",
+                d, n, display(d * sizeof(R)), 1.0 * n / d);
+        delete [] ptr;
+    });
 }
