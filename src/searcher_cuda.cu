@@ -1,33 +1,17 @@
 #include "searcher_cuda.h"
 #include "growable.cuh"
+#include "sn.cuh"
 
 #include <cuda.h>
 #include <cuda/atomic>
 #include <cstring>
+#include <memory>
 #include <iostream>
 #include <format>
 #include <unistd.h>
 #include <cstdio>
 
 #define MAX_SOLUTIONS (1ull << 24)
-
-inline bool operator<(const CudaSearcher::R &lhs, const CudaSearcher::R &rhs) {
-    if (lhs.empty_area < rhs.empty_area)
-        return true;
-    if (lhs.empty_area > rhs.empty_area)
-        return false;
-    if (lhs.nm_cnt < rhs.nm_cnt)
-        return true;
-    if (lhs.nm_cnt > rhs.nm_cnt)
-        return false;
-    for (auto o = 0; o < 4; o++) {
-        if (lhs.ex[o] < rhs.ex[o])
-            return false;
-        if (lhs.ex[o] > rhs.ex[o])
-            return false;
-    }
-    return false;
-}
 
 /**
  * 128 resident grids / device (Concurrent Kernel Execution)
@@ -61,91 +45,81 @@ void chk_impl(CUresult code, const char *file, int line) {
     }
 }
 
+static int n_devices;
 static const frow_info_t *h_frowInfoL, *h_frowInfoR;
-static frow_t *d_frowDataL[16], *d_frowDataR[16];
+static frow_t *d_frowDataL[128][16], *d_frowDataR[128][16];
 
 void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
+    C(cudaGetDeviceCount(&n_devices));
+    n_devices = min(n_devices, 128);
+    std::cout << std::format("n_devices = {}\n", n_devices);
+    if (!n_devices)
+        throw std::runtime_error{ "no CUDA device" };
+
     h_frowInfoL = fiL;
     h_frowInfoR = fiR;
-    for (auto i = 0; i < 16; i++) {
-        C(cudaMalloc(&d_frowDataL[i], fiL[i].sz[5] * sizeof(frow_t)));
-        C(cudaMalloc(&d_frowDataR[i], fiR[i].sz[5] * sizeof(frow_t)));
-        C(cudaMemcpy(d_frowDataL[i], fiL[i].data, fiL[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
-        C(cudaMemcpy(d_frowDataR[i], fiR[i].data, fiR[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
-    }
-    C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
-    size_t drplc;
-    C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
-    std::cout << std::format("DRPLC = {}\n", drplc);
-}
-
-bool h_push_nm(uint32_t &nm_cnt, uint8_t old_nm[16], frow_t &frow) {
-    for (auto v = 0; v < 4; v++) {
-        auto nm = frow.nm[v];
-        if (nm == 0xffu)
-            break;
-        for (auto o = 0; o < nm_cnt; o++)
-            if (old_nm[o] == nm)
-                return false;
-        old_nm[nm_cnt++] = nm;
-    }
-    return true;
-}
-
-__device__ __forceinline__
-bool d_push_nm(uint32_t &nm_cnt, uint32_t old_nm[4], uint32_t new_nm) {
-#pragma unroll
-    for (auto v = 0; v < 4; v++) {
-        auto nm = (new_nm >> 8 * v) & 0xffu;
-        if (nm == 0xffu)
-            break;
-        auto nmx = __byte_perm(new_nm, 0, v << 0 | v << 4 | v << 8 | v << 12);
-#pragma unroll
-        for (auto o = 0; o < 4; o++) {
-            if (4 * o >= nm_cnt)
-                break;
-            if (__vcmpeq4(nmx, old_nm[o])) [[unlikely]]
-                return false;
+    for (auto d = 0; d < n_devices; d++) {
+        C(cudaSetDevice(d));
+        for (auto i = 0; i < 16; i++) {
+            C(cudaMalloc(&d_frowDataL[d][i], fiL[i].sz[5] * sizeof(frow_t)));
+            C(cudaMalloc(&d_frowDataR[d][i], fiR[i].sz[5] * sizeof(frow_t)));
+            C(cudaMemcpyAsync(d_frowDataL[d][i], fiL[i].data,
+                        fiL[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
+            C(cudaMemcpyAsync(d_frowDataR[d][i], fiR[i].data,
+                        fiR[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
         }
-        __builtin_assume(nm_cnt < 16);
-        old_nm[nm_cnt / 4] &= ~(0xffu << nm_cnt % 4 * 8);
-        old_nm[nm_cnt / 4] |= nm << nm_cnt % 4 * 8;
-        nm_cnt++;
+        C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
+        size_t drplc;
+        C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
+        std::cout << std::format("dev{}.DRPLC = {}\n", d, drplc);
     }
-    return true;
 }
 
-template <bool System = false>
+#define CYC_CHUNK (10ull * 1048576ull / sizeof(R))
+
 __global__
-void d_row_search(CudaSearcher::B bins,
-        const CudaSearcher::R *cfgs, uint64_t n_cfgs,
+void d_row_search(
+        R *bins,
+        unsigned long long *n_bins,
+        const uint32_t *n_available_chunks,
+        uint32_t *n_completed_chunks,
+        const R *cfgs, uint64_t n_cfgs,
         const frow_t *f0L, uint32_t f0Lsz,
         const frow_t *f0R, uint32_t f0Rsz) {
     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
-    if (idx >= n_cfgs * f0Lsz * f0Rsz) return;
+    if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
     auto cfg = cfgs[idx / f0Rsz / f0Lsz];
     auto fL  = f0L [idx / f0Rsz % f0Lsz];
     auto fR  = f0R [idx % f0Rsz];
-    if (fL.shape & ~cfg.empty_area) return;
-    if (fR.shape & ~cfg.empty_area) return;
-    if (fL.shape & fR.shape) return;
-    if (!d_push_nm(cfg.nm_cnt, cfg.ex, fL.nm0123)) return;
-    if (!d_push_nm(cfg.nm_cnt, cfg.ex, fR.nm0123)) return;
+    if (fL.shape & ~cfg.empty_area) [[unlikely]] return;
+    if (fR.shape & ~cfg.empty_area) [[unlikely]] return;
+    if (fL.shape & fR.shape) [[unlikely]] return;
+    d_push(cfg.nm_cnt, cfg.ex, fL.nm0123);
+    d_push(cfg.nm_cnt, cfg.ex, fR.nm0123);
+    d_sn(cfg.nm_cnt, cfg.ex);
+    if (!d_uniq_chk(cfg.nm_cnt, cfg.ex)) [[unlikely]] return;
     cfg.empty_area &= ~fL.shape;
     cfg.empty_area &= ~fR.shape;
     __builtin_assume(!(cfg.empty_area & 0b11111111u));
     cfg.empty_area >>= 8;
-    auto pos = cfg.empty_area & 0b11111111u;
-    CudaSearcher::R *ptr;
-    if constexpr (System)
-        ptr = bins[pos].ptr + atomicAdd_system(&bins[pos].len, 1);
-    else
-        ptr = bins[pos].ptr + atomicAdd(&bins[pos].len, 1);
-    *ptr = cfg; // slice
+    auto out = __nv_atomic_fetch_add(n_bins, 1,
+            __NV_ATOMIC_ACQUIRE, __NV_THREAD_SCOPE_DEVICE);
+    unsigned long long cap;
+spin:
+    cap = __nv_atomic_load_n(const_cast<uint32_t *>(n_available_chunks),
+            __NV_ATOMIC_ACQUIRE, __NV_THREAD_SCOPE_SYSTEM) * CYC_CHUNK;
+    if (out >= cap)
+        goto spin;
+    bins[out] = cfg; // slice
+    if (out % CYC_CHUNK == 0) {
+        __nv_atomic_fetch_add(n_completed_chunks, 1,
+                __NV_ATOMIC_RELEASE, __NV_THREAD_SCOPE_SYSTEM);
+    }
 }
 
 CudaSearcher::CudaSearcher(uint64_t empty_area)
-    : solutions{}, height{ (std::bit_width(empty_area) + 8u - 1u) / 8u } {
+    : solutions{}, grs{},
+      height{ (std::bit_width(empty_area) + 8u - 1u) / 8u } {
     auto &r = solutions[empty_area & 0xffu];
     C(cudaMallocManaged(&r.ptr, sizeof(R)));
     r.ptr[0] = R{ empty_area, { ~0u, ~0u, ~0u, ~0u }, 0 };
@@ -181,70 +155,154 @@ std::pair<uint64_t, uint32_t> balance(uint64_t n) {
     return { (n + 511) / 512, 512 };
 }
 
-void CudaSearcher::search_GPU(bool fake) {
-    Growable<R> grs[256];
-    Rg<R> *bins;
-    C(cudaMallocManaged(&bins, sizeof(B)));
-    C(cudaMemset(bins, 0, sizeof(B)));
-    for (auto ipos = 0u; ipos <= 255u; ipos++) {
-        auto [ptr, len] = solutions[ipos];
-        auto &f0L = h_frowInfoL[ipos >> 0 & 0xfu];
-        auto &f0R = h_frowInfoR[ipos >> 4 & 0xfu];
-        auto d_f0L = d_frowDataL[ipos >> 0 & 0xfu];
-        auto d_f0R = d_frowDataR[ipos >> 4 & 0xfu];
+#define VMEM_SZ ((1zu << 43) / sizeof(R))
+
+struct Device {
+    int dev;
+    cudaStream_t stream;
+
+    std::unique_ptr<Growable<R>> gr;
+
+    uint32_t *counters;
+    uint32_t n_collected_chunks;
+
+    R *bins; // __device__, but owned by Growable<R>
+    unsigned long long *n_bins; // __device__, owned
+
+    Device(Device &&other) = default;
+    Device &operator=(Device &&other) = default;
+    explicit Device(int d)
+        : dev{ d }, stream{}, gr{},
+          counters{}, n_collected_chunks{}, bins{}, n_bins{} {
+        C(cudaMallocManaged(&counters, 2 * sizeof(uint32_t)));
+
+        C(cudaSetDevice(d));
+        C(cudaStreamCreate(&stream));
+        C(cudaMallocAsync(&n_bins, sizeof(unsigned long long), stream));
+
+        std::cout << std::format("dev#{}: map {}B of vmem, then fill it with {}B chunks\n",
+                dev, display(VMEM_SZ), display(CYC_CHUNK * sizeof(R)));
+        gr = std::make_unique<Growable<R>>(VMEM_SZ);
+        auto k = 0;
+        while (true) {
+            if (auto p = gr->get(CYC_CHUNK * ++k); p)
+                bins = p;
+            else
+                break;
+        }
+        k--;
+        cuda::atomic_ref n_available_chunks{ counters[0] };
+        n_available_chunks.fetch_add(k, cuda::memory_order_release);
+        std::cout << std::format("dev#{}: {} * {}B = {}B of mem ({}) mapped\n",
+                dev, k, display(CYC_CHUNK * sizeof(R)), display(k * CYC_CHUNK * sizeof(R)), k * CYC_CHUNK);
+    }
+
+    ~Device() {
+        C(cudaSetDevice(dev));
+        C(cudaFreeAsync(counters, stream));
+        C(cudaFreeAsync(n_bins, stream));
+        C(cudaStreamSynchronize(stream));
+        C(cudaStreamDestroy(stream));
+    }
+
+    [[nodiscard]] bool ready() const {
+        auto res = cudaStreamQuery(stream);
+        switch (res) {
+            case cudaSuccess: return true;
+            case cudaErrorNotReady: return false;
+            default: C(res); return false;
+        }
+    }
+
+    void join() {
+        std::cout << std::format("dev#{}: synchronize\n", dev);
+        C(cudaStreamSynchronize(stream));
+    }
+
+    void dispatch(unsigned pos, unsigned height, Rg<R> cfgs) {
+        auto [ptr, len] = cfgs;
         auto szid = min(height - 1, 5);
-        auto fanout = (unsigned long long)f0L.sz[szid] * f0R.sz[szid];
-        auto risk_free = len * fanout;
-        for (auto opos = 0u; opos <= 255u; opos++)
-            risk_free = min(risk_free, (unsigned long long)grs[opos].risk_free_size());
-        auto alloc = len * fanout;
-        alloc = max(risk_free, min(alloc, 16ull * 1048576 / sizeof(R)));
-        auto max_n = max(1ull, alloc / fanout);
-        if (len / max_n > 100)
-            std::cout << std::format("ipos=0b{:08b} len={} max_n={} fanout={} len*fanout*sizeof(R)={}\n",
-                    ipos, len, max_n, fanout, display(len*fanout*sizeof(R)));
-        while (len) {
-            auto n = min(len, max_n);
-            auto [b, t] = balance(n * fanout);
-            for (auto opos = 0u; opos <= 255u; opos++) {
-                bins[opos].ptr = grs[opos].get(alloc);
-                bins[opos].len = 0;
-                if (!bins[opos].ptr)
-                    throw std::runtime_error{ "OOM" };
-            }
-            d_row_search<<<b, t>>>(bins, ptr, n,
-                    d_f0L, f0L.sz[szid],
-                    d_f0R, f0R.sz[szid]);
-            C(cudaPeekAtLastError());
-            C(cudaDeviceSynchronize());
-            for (auto opos = 0u; opos <= 255u; opos++)
-                grs[opos].commit(bins[opos].len);
-            len -= n;
-        }
+        auto fanoutL = h_frowInfoL[(pos >> 0) & 0b1111u].sz[szid];
+        auto fanoutR = h_frowInfoR[(pos >> 4) & 0b1111u].sz[szid];
+        auto sz = len * fanoutL * fanoutR;
+        auto d_f0L = d_frowDataL[dev][pos >> 0 & 0xfu];
+        auto d_f0R = d_frowDataR[dev][pos >> 4 & 0xfu];
+        auto [b, t] = balance(sz);
+        std::cout << std::format("#{:08b}-dev#{}: <<<{}, {}>>> = {} * L{} * R{} => max {}B\n",
+                pos, dev, b, t, len, fanoutL, fanoutR, display(sz * sizeof(R)));
+        C(cudaSetDevice(dev));
+        C(cudaStreamAttachMemAsync(stream, ptr, len * sizeof(R)));
+        C(cudaMemPrefetchAsync(ptr, len * sizeof(R), dev, stream));
+        d_row_search<<<b, t, 0, stream>>>(bins, n_bins,
+                &counters[0], &counters[1],
+                ptr, len,
+                d_f0L, fanoutL,
+                d_f0R, fanoutR);
+        C(cudaFreeAsync(ptr, stream));
     }
-    if (!fake) {
-        for (auto ipos = 0u; ipos <= 255u; ipos++) {
-            C(cudaFree(solutions[ipos].ptr));
-            solutions[ipos] = grs[ipos].cpu_merge_sort();
+
+    void collect(Sorter &sorter, bool force = false) {
+        cuda::atomic_ref n_available_chunks{ counters[0] };
+        cuda::atomic_ref n_completed_chunks{ counters[1] };
+        auto completed = n_completed_chunks.load(cuda::memory_order_acquire);
+        auto k = completed > n_collected_chunks ? completed - n_collected_chunks : 0u;
+        if (k) {
+            auto n = n_available_chunks.load(cuda::memory_order_relaxed);
+            std::cout << std::format("dev#{}: {}/{} (+{}) chunks ({}B) recycled\n",
+                    dev, completed, n, k, display(k * CYC_CHUNK * sizeof(R)));
         }
-        height--;
-    } else {
-        for (auto ipos = 0u; ipos <= 255u; ipos++) {
-            auto [ptr, len] = grs[ipos].cpu_merge_sort();
-            C(cudaFree(ptr));
+        for (auto i = 0u; i < k; i++) {
+            gr->commit(CYC_CHUNK);
+            gr->evict1();
+            n_available_chunks.fetch_add(1, cuda::memory_order_acquire);
+            completed++;
         }
+        if (!force && !sorter.ready())
+            return;
+        std::cout << std::format("dev#{}: pushing {} entries to sorter ({}B)\n",
+                dev, gr->get_load(), display(gr->get_load() * sizeof(R)));
+        sorter.push(gr->remove_data());
     }
-    C(cudaFree(bins));
+};
+
+void CudaSearcher::search_GPU() {
+    Sorter sorter{ *this };
+    std::vector<Device> devs;
+    for (auto i = 0; i < n_devices; i++)
+        devs.emplace_back(i);
+
+    for (unsigned ipos = 0u, dev = 0u; ipos <= 255u; ipos++) {
+        devs[dev].dispatch(ipos, height, solutions[ipos]);
+        dev = (dev + 1) % n_devices;
+    }
+    bool flag;
+    do {
+        flag = true;
+        for (auto &dev : devs) {
+            flag &= dev.ready();
+            dev.collect(sorter);
+        }
+    } while (!flag);
+    for (auto &dev : devs)
+        dev.collect(sorter, true);
+    devs.clear();
+    sorter.join();
 }
 
-uint64_t CudaSearcher::next_size() const {
+uint64_t CudaSearcher::next_size(unsigned pos) const {
     auto szid = min(height - 1, 5);
-    auto cnt = 0ull;
-    for (auto pos = 0u; pos <= 255u; pos++)
-        cnt += solutions[pos].len
-            * h_frowInfoL[(pos >> 0) & 0b1111u].sz[szid]
-            * h_frowInfoR[(pos >> 4) & 0b1111u].sz[szid];
-    return cnt;
+    return solutions[pos].len
+        * h_frowInfoL[(pos >> 0) & 0b1111u].sz[szid]
+        * h_frowInfoR[(pos >> 4) & 0b1111u].sz[szid];
+}
+
+Rg<R> CudaSearcher::write_solution(unsigned pos, size_t sz) {
+    auto &r = solutions[pos];
+    C(cudaFree(r.ptr));
+    r.ptr = nullptr, r.len = 0;
+    C(cudaMallocManaged(&r.ptr, sz * sizeof(R), cudaMemAttachHost));
+    r.len = sz;
+    return r;
 }
 
 void show_devices() {

@@ -159,32 +159,19 @@ uint64_t Searcher::step(Shape<8> empty_area) {
     while (true) {
         std::print("height={} size={}={:.02f}GiB next={}={:.02f}GiB avg={:.1f}x \n",
                 cs.get_height(),
-                cs.size(), sizeof(CudaSearcher::R) * cs.size() / 1073741824.0,
-                cs.next_size(), sizeof(CudaSearcher::R) * cs.next_size() / 1073741824.0,
+                cs.size(), sizeof(R) * cs.size() / 1073741824.0,
+                cs.next_size(), sizeof(R) * cs.next_size() / 1073741824.0,
                 1.0 * cs.next_size() / cs.size());
-        // std::print(">> (fake )? gpu\n");
-        // std::cout.flush();
-        // std::string str;
-        // std::cin >> str;
-        // if (std::cin.eof())
-        //     std::abort();
-        // auto fake = false;
-        // if (str == "fake") {
-        //     fake = true;
-        //     std::cin >> str;
-        // }
         auto t1 = std::chrono::steady_clock::now();
-        // if (str == "gpu") {
-            cs.search_GPU(false);
-        // }
+        cs.search_GPU();
         auto t2 = std::chrono::steady_clock::now();
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
         if (us < 1000)
-            std::print("  => cpmpleted in {}us\n", us);
+            std::print("  => completed in {}us\n", us);
         else if (us < 1000000)
-            std::print("  => cpmpleted in {:.2f}ms\n", us / 1e3);
+            std::print("  => completed in {:.2f}ms\n", us / 1e3);
         else
-            std::print("  => cpmpleted in {:.2f}s\n", us / 1e6);
+            std::print("  => completed in {:.2f}s\n", us / 1e6);
     }
 
     /*

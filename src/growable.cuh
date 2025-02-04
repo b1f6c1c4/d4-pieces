@@ -41,7 +41,7 @@ class Growable {
     CUmemAccessDesc adesc;
 
 public:
-    explicit Growable(size_t max = 0);
+    explicit Growable(int dev, size_t max = 0);
     Growable &operator=(Growable &&other) noexcept;
     ~Growable();
 
@@ -64,12 +64,12 @@ public:
         return nullptr;
     }
 
-    // T must have opeartor<
-    // returns a unified memory, and the caller needs to free it
-    // clears all used
-    R cpu_merge_sort();
-
     void mem_stat() const;
+
+    std::vector<R> remove_data() {
+        evicted = 0;
+        return std::move(evicted_data);
+    }
 
     // make sure risk_free_size() >= n, and return the write-start point
     [[nodiscard]] bool ensure(size_t n);
@@ -87,15 +87,13 @@ public:
 };
 
 template <typename T>
-Growable<T>::Growable(size_t max)
+Growable<T>::Growable(int dev, size_t max)
     : reserved{}, vmaps{}, offset{}, used{}, maps{},
       mapped{}, evicted_data{}, evicted{}, chunk{},
       prop{}, adesc{} {
-    int n; C(cudaGetDeviceCount(&n)); // dark magic; don't touch
-
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-    C(cudaGetDevice(&prop.location.id));
+    prop.location.id = dev;
     adesc.location = prop.location;
     adesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
 
@@ -134,46 +132,6 @@ Growable<T>::~Growable() {
     for (auto r : evicted_data)
         delete [] r.ptr;
     evicted_data.clear();
-}
-
-template <typename T>
-Growable<T>::R Growable<T>::cpu_merge_sort() {
-    evict_all();
-    R dest{};
-    C(cudaMallocManaged(&dest.ptr, evicted * sizeof(T)));
-    // C(cudaMemAdvise(dest.ptr, evicted * sizeof(T),
-    //             cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId));
-    std::vector<std::pair<size_t, size_t>> heap;
-    for (auto i = 0u; auto r : evicted_data) {
-        heap.emplace_back(i++, 0);
-        std::sort(r.ptr, r.ptr + r.len);
-    }
-    auto pproj = [&,this](std::pair<size_t, size_t> p) {
-        auto [blk, id] = p;
-        return evicted_data[blk].ptr[id];
-    };
-    while (!heap.empty()) {
-        std::ranges::pop_heap(heap, std::less{}, pproj);
-        auto &[blk, id] = heap.back();
-        auto val = evicted_data[blk].ptr[id];
-        if (!dest.len || dest.ptr[dest.len - 1] != val)
-            dest.ptr[dest.len++] = val;
-        if (++id == evicted_data[blk].len)
-            heap.pop_back();
-        else
-            std::ranges::push_heap(heap, std::less{}, pproj);
-    }
-    for (auto r : evicted_data)
-        delete [] r.ptr;
-    evicted_data.clear();
-    evicted = 0;
-    // int dev;
-    // C(cudaGetDevice(&dev));
-    // C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
-    //            cudaMemAdviseSetAccessedBy, dev));
-    // C(cudaMemAdvise(dest.ptr, dest.len * sizeof(T),
-    //            cudaMemAdviseSetReadMostly, dev));
-    return dest;
 }
 
 template <typename T>
