@@ -163,7 +163,7 @@ uint64_t Searcher::step(Shape<8> empty_area) {
                 cs.next_size(), sizeof(R) * cs.next_size() / 1073741824.0,
                 1.0 * cs.next_size() / cs.size());
         auto t1 = std::chrono::steady_clock::now();
-        cs.search_GPU(cs.get_height() <= 4);
+        cs.search_GPU(cs.get_height() <= 7);
         auto t2 = std::chrono::steady_clock::now();
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
         if (us < 1000)

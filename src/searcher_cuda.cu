@@ -76,7 +76,7 @@ void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
     }
 }
 
-#define CYC_CHUNK (256ull * 1048576ull / sizeof(R))
+#define CYC_CHUNK (32ull * 1048576ull / sizeof(R))
 
 __global__
 void d_row_search(
@@ -192,7 +192,7 @@ struct Device {
                 dev, display(vmem_free * sizeof(R)), display(CYC_CHUNK * sizeof(R)));
         gr = std::make_unique<Growable<R>>(d, vmem_free, CYC_CHUNK);
         auto k = 0u;
-        for (auto i = 1u; i <= 90u; i++) {
+        for (auto i = 1u; i <= 700u; i++) {
             auto p = gr->get(CYC_CHUNK * i);
             if (p)
                 bins = p, k = i;
@@ -283,8 +283,6 @@ struct Device {
 
     void collect(Sorter &sorter, bool last) {
         if (!gr->get_load())
-            return;
-        if (!last && !sorter.ready())
             return;
 
         std::cout << std::format("dev#{}: pushing {} entries to dedup sorter ({}B)\n",

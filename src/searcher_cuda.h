@@ -11,6 +11,8 @@
 
 #include "growable.h"
 
+#include <boost/unordered/concurrent_flat_set_fwd.hpp>
+
 struct tt_t {
     uint64_t shape;
     uint8_t nm;
@@ -36,29 +38,20 @@ struct R {
 };
 
 struct CudaSearcher;
+namespace boost::executors { class basic_thread_pool; }
+struct CSR;
 struct Sorter {
     explicit Sorter(CudaSearcher &p);
+    ~Sorter();
 
-    [[nodiscard]] bool ready() const;
     void push(std::vector<Rg<R>> &&cont);
     void join();
 
 private:
     CudaSearcher &parent;
-    size_t total;
-
-    std::vector<std::thread> threads;
-    mutable std::mutex       mtx;
-    std::condition_variable  cv;
-    std::condition_variable  cv_push;
-    unsigned                 pending; // 0~256 work to be done
-    std::vector<Rg<R>>       queue; // __host__, delete []
-    uint64_t                 batch;
-    bool                     closed;
-
-    uint64_t dedup_size, orig_size;
-
-    void thread_entry(int i, int n);
+    size_t dedup, total;
+    boost::executors::basic_thread_pool *pool;
+    CSR *sets;
 };
 
 struct Device;
