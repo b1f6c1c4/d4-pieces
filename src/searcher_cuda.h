@@ -45,6 +45,7 @@ struct Sorter {
 
 private:
     CudaSearcher &parent;
+    size_t total;
 
     std::vector<std::thread> threads;
     mutable std::mutex       mtx;
@@ -58,6 +59,7 @@ private:
     void thread_entry(int i, int n);
 };
 
+struct Device;
 struct CudaSearcher {
     explicit CudaSearcher(uint64_t empty_area);
     ~CudaSearcher();
@@ -84,7 +86,6 @@ struct CudaSearcher {
 
 private:
     Rg<R> solutions[256];
-    std::vector<Growable<R>> grs; // per-GPU
 
     uint32_t height; // maximum hight stored in solutions
 

@@ -1,11 +1,12 @@
 #pragma once
 
 #include <cuda.h>
-#include <deque>
 #include <algorithm>
+#include <deque>
 #include <format>
-#include <iostream>
 #include <functional>
+#include <iostream>
+#include <numeric>
 #include <ranges>
 #include <vector>
 
@@ -14,7 +15,6 @@
 
 #define C(ans) { chk_impl((ans), __FILE__, __LINE__); }
 static void chk_impl(CUresult code, const char *file, int line);
-static void chk_impl(cudaError_t code, const char *file, int line);
 
 template <typename T>
 class Growable {
@@ -41,7 +41,7 @@ class Growable {
     CUmemAccessDesc adesc;
 
 public:
-    explicit Growable(int dev, size_t max = 0);
+    explicit Growable(int dev, size_t max = 0, size_t c = 1);
     Growable &operator=(Growable &&other) noexcept;
     ~Growable();
 
@@ -66,7 +66,7 @@ public:
 
     void mem_stat() const;
 
-    std::vector<R> remove_data() {
+    std::vector<R> &&remove_data() {
         evicted = 0;
         return std::move(evicted_data);
     }
@@ -87,7 +87,7 @@ public:
 };
 
 template <typename T>
-Growable<T>::Growable(int dev, size_t max)
+Growable<T>::Growable(int dev, size_t max, size_t c)
     : reserved{}, vmaps{}, offset{}, used{}, maps{},
       mapped{}, evicted_data{}, evicted{}, chunk{},
       prop{}, adesc{} {
@@ -98,7 +98,7 @@ Growable<T>::Growable(int dev, size_t max)
     adesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
 
     C(cuMemGetAllocationGranularity(&chunk, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
-    chunk = (chunk + sizeof(T) - 1) / sizeof(T);
+    chunk = std::lcm(chunk, c * sizeof(T)) / sizeof(T);
     remap(max);
 };
 
@@ -176,18 +176,32 @@ void Growable<T>::evict1() {
         auto dst = evicted_data.emplace_back(R{ new T[used1], used1 });
         if (!dst.ptr)
             throw std::runtime_error{ std::format("new T[{}] failed ({} MiB)", used1, used1 * sizeof(T) / 1048576.0) };
-        C(cudaMemcpy(dst.ptr, src.ptr, used1 * sizeof(T), cudaMemcpyDeviceToHost));
+        std::cout << std::format("dev#{}: cuMemcpyDtoH {}B from 0x{:016x} => 0x{:016x}\n",
+                prop.location.id, display(used1 * sizeof(T)), (size_t)src.ptr, (size_t)dst.ptr);
+        auto err = cuMemcpyDtoH(dst.ptr, (CUdeviceptr)src.ptr, used1 * sizeof(T));
+        if (err != CUDA_SUCCESS) {
+            mem_stat();
+            C(err);
+        }
         evicted += used1;
     }
     if (used < src.len) {
         used = 0;
     } else {
-        remap(mapped + src.len);
-        src = maps.front();
+        // remap(mapped + src.len);
+        maps.pop_front();
         C(cuMemUnmap((CUdeviceptr)src.ptr, src.len * sizeof(T)));
+        src.ptr += mapped;
         offset += src.len;
-        C(cuMemMap((CUdeviceptr)src.ptr, src.len * sizeof(T), 0, src.h, 0));
-        C(cuMemSetAccess((CUdeviceptr)src.ptr, src.len * sizeof(T), &adesc, 1));
+        if (src.ptr + src.len >= vmaps[0].ptr + reserved) {
+            std::cout << std::format("WARNING: rotation failed as vmem exhausted");
+            C(cuMemRelease(src.h));
+            mapped -= src.len;
+        } else {
+            C(cuMemMap((CUdeviceptr)src.ptr, src.len * sizeof(T), 0, src.h, 0));
+            C(cuMemSetAccess((CUdeviceptr)src.ptr, src.len * sizeof(T), &adesc, 1));
+            maps.push_back(src);
+        }
         used -= src.len;
     }
 }
@@ -215,7 +229,7 @@ void Growable<T>::evict_all() {
     auto dst = evicted_data.emplace_back(R{ new T[used], used });
     if (!dst.ptr)
         throw std::runtime_error{ std::format("new T[{}] failed ({} MiB)", used, used * sizeof(T) / 1048576.0) };
-    C(cudaMemcpy(dst.ptr, maps[0].ptr, used * sizeof(T), cudaMemcpyDeviceToHost));
+    C(cuMemcpyDtoH(dst.ptr, (CUdeviceptr)maps[0].ptr, used * sizeof(T)));
     evicted += used;
     used = 0;
 }

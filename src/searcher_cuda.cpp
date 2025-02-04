@@ -2,23 +2,23 @@
 
 #include <cstring>
 #include <print>
+#include <iostream>
 #include <unordered_set>
 #include <pthread.h>
 #include <sched.h>
 
 Sorter::Sorter(CudaSearcher &p)
     : parent{ p },
-      threads{}, mtx{}, cv{}, cv_push{}, pending{ 256 },
+      total{ std::min(std::thread::hardware_concurrency(), 256u) },
+      threads{}, mtx{}, cv{}, cv_push{}, pending{ 0 },
       queue{}, batch{}, closed{} {
-    auto total = std::thread::hardware_concurrency();
-    total = std::min(total, 256u);
     auto k = 0;
     for (auto i = 0u; i < total; i++) {
         auto n = i < 256 % total ? (256 + total - 1) / total : 256 / total;
         threads.emplace_back(&Sorter::thread_entry, this, k, n);
         k += n;
     }
-    if (k != total)
+    if (k != 256)
         throw std::runtime_error{ "internal error" };
 }
 
@@ -59,6 +59,8 @@ bool Sorter::ready() const {
 }
 
 void Sorter::push(std::vector<Rg<R>> &&cont) {
+    if (cont.empty())
+        return;
     std::unique_lock lock{ mtx };
     cv_push.wait(lock, [this]{ return pending == 0; });
     pending += 256;
@@ -70,33 +72,39 @@ void Sorter::push(std::vector<Rg<R>> &&cont) {
     cv.notify_all();
 }
 
-void Sorter::thread_entry(int i, int n) {
+void Sorter::thread_entry(int pos, int n) {
     cpu_set_t set;
     CPU_ZERO(&set);
-    CPU_SET(i, &set);
+    CPU_SET(pos / 2, &set); // hack
     if (sched_setaffinity(0, sizeof(set), &set) == -1)
         std::print("sched_setaffinity(2): {}\n", std::strerror(errno));
 
     std::vector<std::unordered_set<R>> sets(n);
 
+    std::vector<size_t> count(n, 0zu);
+    auto total = 0ull;
     std::vector<Rg<R>> local_copy;
     uint64_t last{};
     while (true) {
         std::unique_lock lock{ mtx };
-        cv.wait(lock, [=,this]{ return batch > last; });
+        cv.wait(lock, [=,this]{ return batch > last || closed; });
         if (batch > last + 1)
             throw std::runtime_error{ "missing batch" };
-        local_copy = queue; // copy
+        if (batch > last)
+            local_copy = queue; // copy
         auto cls = closed;
         lock.unlock();
         for (auto r : local_copy) {
             for (auto &set : sets)
                 set.reserve(set.size() + r.len / 200);
             for (auto i = 0ull; i < r.len; i++) {
-                auto pos = (r.ptr[i].empty_area & 0xffu);
-                if (pos >= i && pos < i + n) [[unlikely]]
-                    sets[pos - i].emplace(r.ptr[i]);
+                auto p = (r.ptr[i].empty_area & 0xffu);
+                if (p >= pos && p < pos + n) [[unlikely]] {
+                    sets[p - pos].emplace(r.ptr[i]);
+                    count[p - pos]++;
+                }
             }
+            total += r.len;
         }
         local_copy.clear();
         if (cls)
@@ -107,9 +115,16 @@ void Sorter::thread_entry(int i, int n) {
         cv_push.notify_one();
     }
 
-    for (auto pos = i; pos < i + n; pos++) {
-        auto r = parent.write_solution(pos, sets[i].size());
-        for (auto i = 0zu; auto &v : sets[i])
+    for (auto p = pos; p < pos + n; p++) {
+        auto &set = sets[p - pos];
+        if (!set.size()) {
+            parent.write_solution(p, 0zu);
+            continue;
+        }
+        std::print(std::cerr, "sorter#0x{:02x}: {:8}/{:9}/{} sorted ({:.01f}x)\n", p,
+                set.size(), count[p - pos], total, 1.0 * count[p - pos] / set.size());
+        auto r = parent.write_solution(p, set.size());
+        for (auto i = 0zu; auto &v : set)
             r.ptr[i++] = v;
     }
 }
