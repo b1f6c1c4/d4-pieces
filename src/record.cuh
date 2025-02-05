@@ -1,5 +1,7 @@
 #pragma once
 
+#include "record.h"
+
 template <unsigned H> __device__ RX assemble_R(RCfg rc);
 template <unsigned H> __device__ RCfg  parse_R(R cfg, uint8_t ea);
 extern template __device__ RX assemble_R<0>(RCfg rc);

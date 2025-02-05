@@ -7,16 +7,15 @@ RCfg parse_R(R cfg, uint8_t ea) {
     static_assert(H >= 1);
     RCfg rc{ 0ull, 0u, { ~0u, ~0u, ~0u, ~0u } };
     if constexpr (H == 8) {
-        rc.empty_area = (uint64_t)cfg.xaL | cfg.xaH & 0x00ffffffu;
-        rc.nm_cnt = cfg.xaH >> 24;
+        rc.empty_area = (cfg.xaL | (uint64_t)cfg.xaH << 32) << 8 | ea;
         return rc;
     }
     if constexpr (H == 7) {
-        rc.empty_area = (uint64_t)cfg.xaL | cfg.xaH & 0x0000ffffu;
+        rc.empty_area = cfg.xaL | (uint64_t)(cfg.xaH & 0x0000ffffu) << 32;
         rc.nm_cnt = cfg.xaH >> 24;
     }
     if constexpr (H == 6) {
-        rc.empty_area = (uint64_t)cfg.xaL | cfg.xaH >> 16 & 0xffu;
+        rc.empty_area = cfg.xaL | (uint64_t)(cfg.xaH >> 16 & 0xffu) << 32;
         rc.nm_cnt = cfg.xaH >> 24;
         rc.ex[3] = cfg.xaH | 0xffff0000u;
     }
@@ -59,8 +58,10 @@ RX assemble_R(RCfg rc) {
         cfg.xaL = rc.empty_area >> 16; 
         cfg.xaH = __byte_perm(rc.ex[3], rc.nm_cnt, 0x4210u);
     }
-    if constexpr (H <= 4)
+    if constexpr (H <= 4) {
+        cfg.xaL = __byte_perm(rc.empty_area >> 16, rc.nm_cnt, 0x4210u);
         cfg.xaH = rc.ex[3];
+    }
     if constexpr (H <= 6)
         cfg.ex2 = rc.ex[2];
     cfg.ex1 = rc.ex[1];
