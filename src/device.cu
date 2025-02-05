@@ -144,7 +144,7 @@ void Device::recycle(bool last) {
     cuda::atomic_ref n_writer_chunk{ counters[1] };
     auto nwc = n_writer_chunk.load(cuda::memory_order_acquire);
     while (m_scheduled < nwc) {
-        std::cout << std::format("dev#{}: start DtoH chunk #{:0{}}/{} ({} B)\n",
+        std::cout << std::format("dev#{}: start DtoH chunk #{:0{}}/{} ({}B)\n",
                 dev, m_scheduled, count_digits(n_chunks),
                 n_chunks, display(CYC_CHUNK * sizeof(RX)));
         Rg<RX> r{
@@ -177,7 +177,7 @@ void Device::recycle(bool last) {
         return;
 
     auto sz = used - nwc * CYC_CHUNK;
-    std::cout << std::format("dev#{}: start tail DtoH chunk #{:0{}}/{} for {} entries ({} B)\n",
+    std::cout << std::format("dev#{}: start tail DtoH chunk #{:0{}}/{} for {} entries ({}B)\n",
             dev, nwc, count_digits(n_chunks),
             n_chunks, sz, display(sz * sizeof(RX)));
     Rg<RX> r{ new RX[sz], sz };
@@ -190,7 +190,7 @@ void Device::recycle(bool last) {
     m_events.push_back(ev);
 }
 
-void Device::collect(Sorter &sorter, unsigned height) {
+void Device::collect(Sorter &sorter) {
     cuda::atomic_ref n_reader_chunk{ counters[0] };
     while (!m_events.empty()) {
         auto ev = m_events.front();
@@ -200,10 +200,10 @@ void Device::collect(Sorter &sorter, unsigned height) {
         C(err);
         C(cudaEventDestroy(ev));
         auto nrc = n_reader_chunk.fetch_add(1, cuda::memory_order_release);
-        std::cout << std::format("dev#{}: pushing chunk #{:0{}} ({} entries, {} B) to sorter\n",
+        std::cout << std::format("dev#{}: pushing chunk #{:0{}} ({} entries, {}B) to sorter\n",
                 dev, nrc, count_digits(n_chunks),
                 CYC_CHUNK, display(CYC_CHUNK * sizeof(RX)));
-        sorter.push(m_data.front(), height);
+        sorter.push(m_data.front());
         m_events.pop_front();
         m_data.pop_front();
     }

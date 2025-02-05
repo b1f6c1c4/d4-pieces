@@ -66,8 +66,8 @@ struct alignas(64) CSR : boost::unordered_flat_set<R, hasher> {
 Sorter::Sorter(CudaSearcher &p)
     : parent{ p }, dedup{}, total{},
       pool{ new boost::basic_thread_pool{} },
-#ifndef SORTER_256
-      sets{ new CSR[256 * 17]{} } {
+#ifdef SORTER_N
+      sets{ new CSR[256 * SORTER_N]{} } {
 #else
       sets{ new CSR[256]{} } {
 #endif
@@ -88,10 +88,10 @@ void Sorter::join() {
     pool = new boost::basic_thread_pool{};
 #endif
     for (auto pos = 0u; pos <= 255u; pos++) {
-#ifndef SORTER_256
+#ifdef SORTER_N
         auto sz = 0ull;
-        for (auto cnt = 0u; cnt <= 16u; cnt++)
-            sz += sets[pos * 17 + cnt].size();
+        for (auto cnt = 0u; cnt < SORTER_N; cnt++)
+            sz += sets[pos * SORTER_N + cnt].size();
 #else
         auto sz = sets[pos].size();
 #endif
@@ -104,14 +104,14 @@ void Sorter::join() {
         boost::async(*pool, [=,this] {
 #endif
         auto ptr = r.ptr;
-#ifndef SORTER_256
-        for (auto cnt = 0u; cnt <= 16u; cnt++) {
-            auto &set = sets[pos * 17 + cnt];
+#ifdef SORTER_N
+        for (auto cnt = 0u; cnt < SORTER_N; cnt++) {
+            auto &set = sets[pos * SORTER_N + cnt];
 #else
             auto &set = sets[pos];
 #endif
 #if defined(BMARK) && SORTER >= 2 && SORTER <= 3
-#ifndef SORTER_256
+#ifdef SORTER_N
             std::print("sorter: 0b{:08b}/{:2}={} ({}B)\n",
                     pos, cnt, set.size(), display(set.size() * sizeof(R)));
 #else
@@ -128,7 +128,7 @@ void Sorter::join() {
                 *ptr++ = v;
 #endif
             set.clear();
-#ifndef SORTER_256
+#ifdef SORTER_N
         }
 #endif
         if (ptr != r.ptr + sz)
@@ -146,7 +146,7 @@ void Sorter::join() {
 #define N_PAGES 48
 #define N (N_PAGES * 4096ull / sizeof(RX))
 
-void Sorter::push(Rg<RX> r, unsigned height) {
+void Sorter::push(Rg<RX> r) {
     static_assert(N_PAGES * 4096ull % sizeof(RX) == 0, "RX not aligned to N-page boundry");
     if ((size_t)r.ptr % 4096ull)
         throw std::runtime_error{ "ptr not aligned to page boundry" };
@@ -178,8 +178,8 @@ void Sorter::push(Rg<RX> r, unsigned height) {
         boost::async(*pool, [=,this](RX *ptr, size_t len) {
             auto local = 0zu;
             for (auto i = 0zu; i < len; i++) {
-#ifndef SORTER_256
-                auto &set = sets[ptr[i].ea * 17 + ptr[i].get_cnt(height)];
+#ifdef SORTER_N
+                auto &set = sets[ptr[i].ea * SORTER_N + ptr[i].ex0 % SORTER_N];
 #else
                 auto &set = sets[ptr[i].ea];
 #endif

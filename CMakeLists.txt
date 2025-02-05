@@ -55,6 +55,7 @@ else()
         src/naming.cpp
         src/Piece.cpp src/Shape.cpp src/Group.cpp
         src/known1.cpp src/known2.cpp)
+    target_compile_definitions(search PRIVATE SORTER=1 SORTER_N=127)
     target_link_libraries(search PRIVATE boost_thread)
     target_link_libraries(search PRIVATE mimalloc)
     target_link_libraries(search PRIVATE cuda)

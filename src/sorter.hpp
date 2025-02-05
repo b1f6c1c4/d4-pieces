@@ -10,7 +10,7 @@ struct Sorter {
     explicit Sorter(CudaSearcher &p);
     ~Sorter();
 
-    void push(Rg<RX> r, unsigned height);
+    void push(Rg<RX> r);
     void join();
 
 private:

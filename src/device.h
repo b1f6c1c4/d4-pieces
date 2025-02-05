@@ -27,5 +27,5 @@ struct Device {
     [[nodiscard]] bool m_completed() const;
     void dispatch(unsigned pos, unsigned height, Rg<R> cfgs);
     void recycle(bool last);
-    void collect(Sorter &sorter, unsigned height);
+    void collect(Sorter &sorter);
 };
