@@ -2,12 +2,12 @@
 #include "util.cuh"
 
 int n_devices;
-
+CUcontext cuda_ctxs[128];
 frow_t *d_frowDataL[128][16], *d_frowDataR[128][16];
 
 void transfer_frow_to_gpu() {
     C(cudaGetDeviceCount(&n_devices));
-    n_devices = min(n_devices, 1); // FIXME
+    n_devices = min(n_devices, 128);
     std::cout << std::format("n_devices = {}\n", n_devices);
     if (!n_devices)
         throw std::runtime_error{ "no CUDA device" };

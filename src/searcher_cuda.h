@@ -1,38 +1,10 @@
 #pragma once
 
-#include <atomic>
-#include <condition_variable>
-#include <cstddef>
 #include <cstdint>
-#include <mutex>
-#include <semaphore>
-#include <thread>
-#include <vector>
+#include <cstddef>
 
 #include "record.h"
-
-template <typename T>
-struct Rg {
-    T *ptr;
-    unsigned long long len; // number of T
-};
-
-struct CudaSearcher;
-namespace boost::executors { class basic_thread_pool; }
-struct CSR;
-struct Sorter {
-    explicit Sorter(CudaSearcher &p);
-    ~Sorter();
-
-    void push(Rg<RX> r);
-    void join();
-
-private:
-    CudaSearcher &parent;
-    size_t dedup, total;
-    boost::executors::basic_thread_pool *pool;
-    CSR *sets;
-};
+#include "sorter.hpp"
 
 struct Device;
 struct CudaSearcher {
@@ -62,6 +34,7 @@ struct CudaSearcher {
 
 private:
     Rg<R> solutions[256];
+    Device *devs;
 
     uint32_t height; // maximum hight stored in solutions
 

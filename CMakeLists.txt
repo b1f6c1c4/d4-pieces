@@ -46,10 +46,12 @@ else()
         src/search.cpp
         src/searcher.cpp
         src/searcher_cuda.cu
-        src/searcher_cuda.cpp
-        src/record.cu
         src/frow.cu
         src/frow.cpp
+        src/kernel.cu
+        src/device.cu
+        src/record.cu
+        src/sorter.cpp
         src/naming.cpp
         src/Piece.cpp src/Shape.cpp src/Group.cpp
         src/known1.cpp src/known2.cpp)

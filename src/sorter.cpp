@@ -1,6 +1,6 @@
-#include "searcher_cuda.h"
+#include "sorter.hpp"
 
-#include <cstring>
+#include <atomic>
 #include <print>
 #include <iostream>
 
@@ -10,6 +10,7 @@
 #include <boost/unordered/concurrent_flat_set.hpp>
 
 #include "util.hpp"
+#include "searcher_cuda.h"
 
 struct hasher {
     size_t operator()(const R &v) const {

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#ifdef __CUDA_ARCH__
+#include <cuda.h>
+#endif
 
 // g_nme and g_sym must be set
 // required before calling Searcher::Searcher
@@ -21,6 +24,10 @@ struct frow_info_t {
     uint32_t sz[6];
 };
 
-extern int n_devices; // defined in frow.cu
+// defined in frow.cu
+extern int n_devices;
 extern frow_info_t h_frowInfoL[16], h_frowInfoR[16]; // defined in frow.cpp
-extern frow_t *d_frowDataL[128][16], *d_frowDataR[128][16]; // defined in frow.cu
+extern frow_t *d_frowDataL[128][16], *d_frowDataR[128][16];
+#ifdef __CUDA_ARCH__
+extern CUcontext cuda_ctxs[128];
+#endif
