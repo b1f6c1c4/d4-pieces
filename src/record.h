@@ -8,6 +8,9 @@ struct R {
     uint32_t ex0, ex1, ex2;
 
     bool operator==(const R &other) const = default;
+    [[nodiscard]] constexpr uint8_t get_cnt(unsigned height) const {
+        return (height >= 5 ? xaH : xaL) >> 24;
+    }
 };
 
 struct RX : R {

@@ -100,7 +100,7 @@ void CudaSearcher::search_GPU() {
         devs.emplace_back(std::make_unique<Device>(i));
 
     for (auto ipos = 0u; ipos <= 255u; ipos++) {
-        std::ranges::sort(devs, std::greater{}, [](const std::unique_ptr<Device> &dev) {
+        std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
             return dev->workload;
         });
         devs.front()->dispatch(ipos, height, solutions[ipos]);

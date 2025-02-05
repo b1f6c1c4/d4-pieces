@@ -6,7 +6,7 @@
 #include "kernel.h"
 
 template <typename ... TArgs>
-void launch(unsigned b, unsigned t, cudaStream_t s, unsigned height,
+static void launch(unsigned b, unsigned t, cudaStream_t s, unsigned height,
         TArgs && ... args) {
     if (height == 8)
         d_row_search<8><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
