@@ -14,12 +14,11 @@
 struct hasher {
     size_t operator()(const R &v) const {
         size_t h{};
-        h |= v.empty_area;
-        h ^= (size_t)v.nm_cnt << 0;
-        h ^= (size_t)v.ex[0] << 4;
-        h ^= (size_t)v.ex[1] << 32 + 4;
-        h ^= (size_t)v.ex[2] << 32;
-        h ^= (size_t)v.ex[3] << 48;
+        boost::hash_combine(h, v.xaL);
+        boost::hash_combine(h, v.xaH);
+        boost::hash_combine(h, v.ex0);
+        boost::hash_combine(h, v.ex1);
+        boost::hash_combine(h, v.ex2);
         return h;
     }
 };
@@ -55,12 +54,12 @@ void Sorter::join() {
     }
 }
 
-void Sorter::push(Rg<R> r) {
+void Sorter::push(Rg<RX> r) {
     boost::async(*pool, [this, r]{
         auto [ptr, len] = r;
         auto local = 0zu;
         for (auto i = 0zu; i < len; i++) {
-            auto pos = ptr[i].empty_area & 0xffu;
+            auto pos = ptr[i].ea;
             if (sets[pos].insert(ptr[i]))
                 local++;
         }

@@ -29,11 +29,19 @@ struct frow_info_t {
 void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR);
 
 struct R {
-    uint64_t empty_area;
-    uint32_t ex[4];
-    uint32_t nm_cnt;
+    uint32_t xaL; // requires parse_R and assemble_R
+    uint32_t xaH; // requires parse_R and assemble_R
+    uint32_t ex0, ex1, ex2;
+
     bool operator==(const R &other) const = default;
 };
+static_assert(sizeof(R) == 20);
+static_assert(alignof(R) == 4);
+struct RX : R {
+    uint8_t ea;
+};
+static_assert(sizeof(RX) == 24);
+static_assert(alignof(RX) == 4);
 
 template <typename T>
 struct Rg {
@@ -48,7 +56,7 @@ struct Sorter {
     explicit Sorter(CudaSearcher &p);
     ~Sorter();
 
-    void push(Rg<R> r);
+    void push(Rg<RX> r);
     void join();
 
 private:

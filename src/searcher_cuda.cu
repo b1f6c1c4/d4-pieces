@@ -79,12 +79,77 @@ void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
     }
 }
 
-#define CYC_CHUNK (32ull * 1048576ull / sizeof(R))
+#define CYC_CHUNK (32ull * 1048576ull / sizeof(RX))
 
+template <unsigned H>
+__device__ __forceinline__
+void parse_R(R cfg, uint64_t &empty_area, uint32_t &nm_cnt, uint32_t ex[4]) {
+    static_assert(H <= 8);
+    static_assert(H >= 1);
+    if constexpr (H == 8) {
+        empty_area = (uint64_t)cfg.xaL | cfg.xaH & 0x00ffffffu;
+        nm_cnt = cfg.xaH >> 24;
+        return;
+    }
+    if constexpr (H == 7) {
+        empty_area = (uint64_t)cfg.xaL | cfg.xaH & 0x0000ffffu;
+        nm_cnt = cfg.xaH >> 24;
+    }
+    if constexpr (H == 6) {
+        empty_area = (uint64_t)cfg.xaL | cfg.xaH >> 16 & 0xffu;
+        nm_cnt = cfg.xaH >> 24;
+        ex[3] = cfg.xaH | 0xffff0000u;
+    }
+    if constexpr (H == 5) {
+        empty_area = cfg.xaL;
+        nm_cnt = cfg.xaH >> 24;
+        ex[3] = cfg.xaH | 0xff000000u;
+    }
+    if constexpr (H <= 4) {
+        empty_area = cfg.xaL & 0x00ffffffu;
+        nm_cnt = cfg.xaL >> 24;
+        ex[3] = cfg.xaH;
+    }
+    if constexpr (H <= 6)
+        ex[2] = cfg.ex2;
+    ex[1] = cfg.ex1;
+    ex[0] = cfg.ex0;
+}
+
+template <unsigned H> // height - 1
+__device__ __forceinline__
+RX assemble_R(uint64_t empty_area, uint32_t nm_cnt, uint32_t ex[4]) {
+    static_assert(H <= 7);
+    __builtin_assume(!(empty_area & 0b11111111u));
+    RX cfg;
+    cfg.ea = empty_area >> 8 & 0xffu;
+    if constexpr (H == 7) {
+        cfg.xaL = empty_area >> 16; 
+        cfg.xaH = empty_area >> 48 | nm_cnt << 24; 
+    }
+    if constexpr (H == 6) {
+        cfg.xaL = empty_area >> 16; 
+        cfg.xaH = __byte_perm(__byte_perm(ex[3], nm_cnt, 0x4f10u),
+                empty_area >> 32, 0x3610u);
+    }
+    if constexpr (H == 5) {
+        cfg.xaL = empty_area >> 16; 
+        cfg.xaH = __byte_perm(ex[3], nm_cnt, 0x4210u);
+    }
+    if constexpr (H <= 4)
+        cfg.xaH = ex[3];
+    if constexpr (H <= 6)
+        cfg.ex2 = ex[2];
+    cfg.ex1 = ex[1];
+    cfg.ex0 = ex[0];
+    return cfg;
+}
+
+template <unsigned H>
 __global__
 void d_row_search(
         // output ring buffer
-        R                  *ring_buffer, // __device__
+        RX                 *ring_buffer, // __device__
         unsigned long long *n_outs, // __device__
         unsigned long long n_chunks,
         unsigned long long *n_reader_chunk, // __managed__, HtoD
@@ -99,17 +164,20 @@ void d_row_search(
     auto cfg = cfgs[idx / f0Rsz / f0Lsz];
     auto fL  = f0L [idx / f0Rsz % f0Lsz];
     auto fR  = f0R [idx % f0Rsz];
-    if (fL.shape & ~cfg.empty_area) [[unlikely]] return;
-    if (fR.shape & ~cfg.empty_area) [[unlikely]] return;
+    uint64_t empty_area;
+    uint32_t nm_cnt;
+    uint32_t ex[4]{ 0xffffffffu };
+    parse_R<H>(cfg, empty_area, nm_cnt, ex);
+    if (fL.shape & ~empty_area) [[unlikely]] return;
+    if (fR.shape & ~empty_area) [[unlikely]] return;
     if (fL.shape & fR.shape) [[unlikely]] return;
-    d_push(cfg.nm_cnt, cfg.ex, fL.nm0123);
-    d_push(cfg.nm_cnt, cfg.ex, fR.nm0123);
-    d_sn(cfg.nm_cnt, cfg.ex);
-    if (!d_uniq_chk(cfg.nm_cnt, cfg.ex)) [[unlikely]] return;
-    cfg.empty_area &= ~fL.shape;
-    cfg.empty_area &= ~fR.shape;
-    __builtin_assume(!(cfg.empty_area & 0b11111111u));
-    cfg.empty_area >>= 8;
+    d_push(nm_cnt, ex, fL.nm0123);
+    d_push(nm_cnt, ex, fR.nm0123);
+    d_sn(nm_cnt, ex);
+    if (!d_uniq_chk(nm_cnt, ex)) [[unlikely]] return;
+    empty_area &= ~fL.shape;
+    empty_area &= ~fR.shape;
+    auto ocfg = assemble_R<H - 1>(empty_area, nm_cnt, ex);
     auto out = __nv_atomic_fetch_add(n_outs, 1,
             __NV_ATOMIC_ACQUIRE, __NV_THREAD_SCOPE_DEVICE);
 spin:
@@ -119,7 +187,7 @@ spin:
         __nanosleep(1000000);
         goto spin;
     }
-    ring_buffer[out % (n_chunks * CYC_CHUNK)] = cfg; // slice
+    ring_buffer[out % (n_chunks * CYC_CHUNK)] = ocfg; // slice
     if (out && out % CYC_CHUNK == 0) {
         auto tgt = out / CYC_CHUNK;
         auto src = tgt - 1;
@@ -135,11 +203,34 @@ spin:
     }
 }
 
+template <typename ... TArgs>
+void launch(unsigned b, unsigned t, cudaStream_t s, unsigned height,
+        TArgs && ... args) {
+    if (height == 8)
+        d_row_search<8><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else if (height == 7)
+        d_row_search<7><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else if (height == 6)
+        d_row_search<6><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else if (height == 5)
+        d_row_search<5><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else if (height == 4)
+        d_row_search<4><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else if (height == 3)
+        d_row_search<3><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else if (height == 2)
+        d_row_search<2><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else if (height == 1)
+        d_row_search<1><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
+    else
+        throw std::runtime_error{ std::format("height {} not supported", height) };
+}
+
 CudaSearcher::CudaSearcher(uint64_t empty_area)
     : solutions{}, height{ (std::bit_width(empty_area) + 8u - 1u) / 8u } {
     auto &r = solutions[empty_area & 0xffu];
     C(cudaMallocManaged(&r.ptr, sizeof(R)));
-    r.ptr[0] = R{ empty_area, { ~0u, ~0u, ~0u, ~0u }, 0 };
+    r.ptr[0] = RX{ (uint32_t)(empty_area >> 8), (uint32_t)(empty_area >> 8 + 32) };
     r.len = 1;
 }
 
@@ -181,7 +272,7 @@ struct Device {
     int dev;
     cudaStream_t c_stream, m_stream;
 
-    R *ring_buffer; // __device__
+    RX *ring_buffer; // __device__
     unsigned long long n_chunks;
     unsigned long long *counters; // __managed__, n_reader_chunk, n_writer_chunk
 
@@ -190,7 +281,7 @@ struct Device {
     uint64_t workload;
 
     unsigned long long m_scheduled;
-    std::deque<Rg<R>> m_data;
+    std::deque<Rg<RX>> m_data;
     std::deque<cudaEvent_t> m_events;
 
     explicit Device(int d)
@@ -208,7 +299,7 @@ struct Device {
 
         size_t sz_free, sz_total;
         C(cudaMemGetInfo(&sz_free, &sz_total));
-        n_chunks = (9 * sz_free / 10 / sizeof(R) + CYC_CHUNK - 1) / CYC_CHUNK;
+        n_chunks = (9 * sz_free / 10 / sizeof(RX) + CYC_CHUNK - 1) / CYC_CHUNK;
 
         C(cudaStreamCreateWithFlags(&c_stream, cudaStreamNonBlocking));
         C(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
@@ -218,9 +309,9 @@ struct Device {
         C(cudaMemcpyAsync(n_outs, &zero, sizeof(zero), cudaMemcpyHostToDevice, c_stream));
 
         std::cout << std::format("dev#{}: allocating {} * {}B = {}B ring buffer\n",
-                dev, n_chunks, display(CYC_CHUNK * sizeof(R)),
-                display(n_chunks * CYC_CHUNK * sizeof(R)));
-        C(cudaMallocAsync(&ring_buffer, n_chunks * CYC_CHUNK * sizeof(R), c_stream));
+                dev, n_chunks, display(CYC_CHUNK * sizeof(RX)),
+                display(n_chunks * CYC_CHUNK * sizeof(RX)));
+        C(cudaMallocAsync(&ring_buffer, n_chunks * CYC_CHUNK * sizeof(RX), c_stream));
     }
 
     ~Device() {
@@ -267,7 +358,7 @@ struct Device {
         C(cudaMemAdvise(ptr, len * sizeof(R), cudaMemAdviseSetReadMostly, dev));
         C(cudaStreamAttachMemAsync(c_stream, ptr, len * sizeof(R)));
         C(cudaMemPrefetchAsync(ptr, len * sizeof(R), dev, c_stream));
-        d_row_search<<<b, t, 0, c_stream>>>(
+        launch(b, t, c_stream, height,
                 // output ring buffer
                 ring_buffer, n_outs,
                 n_chunks,
@@ -294,11 +385,11 @@ struct Device {
         while (m_scheduled < nwc) {
             std::cout << std::format("dev#{}: start DtoH chunk #{:0{}}/{} ({} B)\n",
                     dev, m_scheduled, count_digits(n_chunks),
-                    n_chunks, display(CYC_CHUNK * sizeof(R)));
-            Rg<R> r{ new R[CYC_CHUNK], CYC_CHUNK };
+                    n_chunks, display(CYC_CHUNK * sizeof(RX)));
+            Rg<RX> r{ new RX[CYC_CHUNK], CYC_CHUNK };
             C(cudaMemcpyAsync(r.ptr,
                         ring_buffer + (m_scheduled % n_chunks) * CYC_CHUNK,
-                        CYC_CHUNK * sizeof(R), cudaMemcpyDeviceToHost, m_stream));
+                        CYC_CHUNK * sizeof(RX), cudaMemcpyDeviceToHost, m_stream));
             cudaEvent_t ev;
             C(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
             C(cudaEventRecord(ev, m_stream));
@@ -325,10 +416,10 @@ struct Device {
         auto sz = used - nwc * CYC_CHUNK;
         std::cout << std::format("dev#{}: start tail DtoH chunk #{:0{}}/{} for {} entries ({} B)\n",
                 dev, nwc, count_digits(n_chunks),
-                n_chunks, sz, display(sz * sizeof(R)));
-        Rg<R> r{ new R[sz], sz };
+                n_chunks, sz, display(sz * sizeof(RX)));
+        Rg<RX> r{ new RX[sz], sz };
         C(cudaMemcpyAsync(r.ptr, ring_buffer + (nwc % n_chunks) * CYC_CHUNK,
-                    sz * sizeof(R), cudaMemcpyDeviceToHost, m_stream));
+                    sz * sizeof(RX), cudaMemcpyDeviceToHost, m_stream));
         cudaEvent_t ev;
         C(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
         C(cudaEventRecord(ev, m_stream));
@@ -348,7 +439,7 @@ struct Device {
             auto nrc = n_reader_chunk.fetch_add(1, cuda::memory_order_release);
             std::cout << std::format("dev#{}: pushing chunk #{:0{}} ({} entries, {} B) to sorter\n",
                     dev, nrc, count_digits(n_chunks),
-                    CYC_CHUNK, display(CYC_CHUNK * sizeof(R)));
+                    CYC_CHUNK, display(CYC_CHUNK * sizeof(RX)));
             sorter.push(m_data.front());
             m_events.pop_front();
             m_data.pop_front();
