@@ -1,6 +1,8 @@
 #include "sorter.hpp"
 
 #include <atomic>
+#include <barrier>
+#include <memory>
 #include <print>
 #include <iostream>
 
@@ -61,19 +63,43 @@ void Sorter::join() {
     }
 }
 
+#define N_PAGES 6
+#define N (N_PAGES * 4096ull / sizeof(RX))
+
 void Sorter::push(Rg<RX> r, unsigned height) {
-    boost::async(*pool, [this, r, height]{
-        auto [ptr, len] = r;
-        auto local = 0zu;
-        for (auto i = 0zu; i < len; i++)
-            if (sets[ptr[i].ea][ptr[i].get_cnt(height)].insert(ptr[i])) // slice
-                local++;
+    static_assert(N_PAGES * 4096ull % sizeof(RX) == 0, "RX not aligned to N-page boundry");
+    if ((size_t)r.ptr % 4096ull)
+        throw std::runtime_error{ "ptr not aligned to page boundry" };
+    auto n = (r.len + N - 1) / N;
+    auto amount = N;
+    auto max_n = 64ull * boost::thread::hardware_concurrency();
+    if (n > max_n) {
+        amount = ((r.len + max_n - 1) / max_n + N - 1) / N * N;
+        n = (r.len + amount - 1) / amount;
+    }
+    if (n * amount < r.len || n && (n - 1) * amount >= r.len)
+        throw std::runtime_error{ std::format("internal error: distributing {} to {} with {} each",
+                r.len, n, amount) };
+    auto deleter = [=,this]{
+        delete [] r.ptr;
         std::atomic_ref atm_d{ dedup };
         std::atomic_ref atm_n{ total };
-        auto d = atm_d.fetch_add(local, std::memory_order_relaxed) + local;
-        auto n = atm_n.fetch_add(len, std::memory_order_relaxed) + len;
+        auto d = atm_d.load(std::memory_order_relaxed);
+        auto n = atm_n.load(std::memory_order_relaxed);
         std::print("sorter: {}/{} = {}B ({:.2f}x)\n",
                 d, n, display(d * sizeof(R)), 1.0 * n / d);
-        delete [] ptr;
-    });
+    };
+    auto barrier = std::make_shared<std::barrier<decltype(deleter)>>(n, deleter);
+    for (auto i = 0u; i < n; i++)
+        boost::async(*pool, [=,this](RX *ptr, size_t len) {
+            auto local = 0zu;
+            for (auto i = 0zu; i < len; i++)
+                if (sets[ptr[i].ea][ptr[i].get_cnt(height)].insert(ptr[i])) // slice
+                    local++;
+            std::atomic_ref atm_d{ dedup };
+            std::atomic_ref atm_n{ total };
+            atm_d.fetch_add(local, std::memory_order_relaxed);
+            atm_n.fetch_add(len, std::memory_order_relaxed);
+            barrier->arrive_and_drop();
+        }, r.ptr + i * amount, std::min(r.len - i * amount, amount));
 }

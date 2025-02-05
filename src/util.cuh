@@ -18,7 +18,7 @@
  * 64KiB constant memory (8KiB cache)
  */
 
-#define CYC_CHUNK (32ull * 1048576ull / sizeof(RX))
+#define CYC_CHUNK (512ull * 1048576ull / sizeof(RX))
 
 #define C(ans) { chk_impl((ans), __FILE__, __LINE__); }
 

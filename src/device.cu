@@ -147,7 +147,9 @@ void Device::recycle(bool last) {
         std::cout << std::format("dev#{}: start DtoH chunk #{:0{}}/{} ({} B)\n",
                 dev, m_scheduled, count_digits(n_chunks),
                 n_chunks, display(CYC_CHUNK * sizeof(RX)));
-        Rg<RX> r{ new RX[CYC_CHUNK], CYC_CHUNK };
+        Rg<RX> r{
+            reinterpret_cast<RX *>(std::aligned_alloc(4096, CYC_CHUNK * sizeof(RX))),
+            CYC_CHUNK };
         C(cudaMemcpyAsync(r.ptr,
                     ring_buffer + (m_scheduled % n_chunks) * CYC_CHUNK,
                     CYC_CHUNK * sizeof(RX), cudaMemcpyDeviceToHost, m_stream));
