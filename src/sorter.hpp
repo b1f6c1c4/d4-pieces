@@ -10,12 +10,12 @@ struct Sorter {
     explicit Sorter(CudaSearcher &p);
     ~Sorter();
 
-    void push(Rg<RX> r);
+    void push(Rg<RX> r, unsigned height);
     void join();
 
 private:
     CudaSearcher &parent;
     size_t dedup, total;
     boost::executors::basic_thread_pool *pool;
-    CSR *sets;
+    CSR (*sets)[17];
 };

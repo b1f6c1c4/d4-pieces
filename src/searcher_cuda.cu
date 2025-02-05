@@ -106,7 +106,7 @@ void CudaSearcher::search_GPU() {
         devs.front()->dispatch(ipos, height, solutions[ipos]);
         for (auto &dev : devs) {
             dev->recycle(false);
-            dev->collect(sorter);
+            dev->collect(sorter, height - 1);
         }
     }
     bool flag;
@@ -115,18 +115,18 @@ void CudaSearcher::search_GPU() {
         for (auto &dev : devs) {
             flag &= dev->c_completed();
             dev->recycle(false);
-            dev->collect(sorter);
+            dev->collect(sorter, height - 1);
         }
     } while (!flag);
     for (auto &dev : devs) {
         dev->recycle(true);
-        dev->collect(sorter);
+        dev->collect(sorter, height - 1);
     }
     do {
         flag = true;
         for (auto &dev : devs) {
             flag &= dev->m_completed();
-            dev->collect(sorter);
+            dev->collect(sorter, height - 1);
         }
     } while (!flag);
     devs.clear();

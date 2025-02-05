@@ -24,12 +24,13 @@ struct hasher {
     }
 };
 
-struct alignas(64) CSR : boost::concurrent_flat_set<R, hasher> {};
+struct alignas(64) CSR : boost::concurrent_flat_set<R, hasher> {
+};
 
 Sorter::Sorter(CudaSearcher &p)
     : parent{ p }, dedup{}, total{},
       pool{ new boost::basic_thread_pool{} },
-      sets{ new CSR[256]{} } {
+      sets{ new CSR[256][17]{} } {
     static_assert(std::alignment_of_v<decltype(sets[0])> >= 64);
 }
 
@@ -42,28 +43,31 @@ void Sorter::join() {
     pool->close();
     pool->join();
     for (auto pos = 0u; pos <= 255u; pos++) {
-        auto &set = sets[pos];
-        if (!set.size()) {
+        auto sz = 0ull;
+        for (auto cnt = 0u; cnt <= 16u; cnt++)
+            sz += sets[pos][cnt].size();
+        if (!sz) {
             parent.write_solution(pos, 0zu);
             continue;
         }
-        auto r = parent.write_solution(pos, set.size());
-        set.cvisit_all([p=r.ptr](R v) mutable {
-            *p++ = v;
-        });
-        set.clear();
+        auto [ptr, _] = parent.write_solution(pos, sz);
+        for (auto cnt = 0u; cnt <= 16u; cnt++) {
+            auto &set = sets[pos][cnt];
+            set.cvisit_all([&](R v) mutable {
+                *ptr++ = v;
+            });
+            set.clear();
+        }
     }
 }
 
-void Sorter::push(Rg<RX> r) {
-    boost::async(*pool, [this, r]{
+void Sorter::push(Rg<RX> r, unsigned height) {
+    boost::async(*pool, [this, r, height]{
         auto [ptr, len] = r;
         auto local = 0zu;
-        for (auto i = 0zu; i < len; i++) {
-            auto pos = ptr[i].ea;
-            if (sets[pos].insert(ptr[i]))
+        for (auto i = 0zu; i < len; i++)
+            if (sets[ptr[i].ea][ptr[i].get_cnt(height)].insert(ptr[i])) // slice
                 local++;
-        }
         std::atomic_ref atm_d{ dedup };
         std::atomic_ref atm_n{ total };
         auto d = atm_d.fetch_add(local, std::memory_order_relaxed) + local;

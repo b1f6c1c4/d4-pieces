@@ -188,7 +188,7 @@ void Device::recycle(bool last) {
     m_events.push_back(ev);
 }
 
-void Device::collect(Sorter &sorter) {
+void Device::collect(Sorter &sorter, unsigned height) {
     cuda::atomic_ref n_reader_chunk{ counters[0] };
     while (!m_events.empty()) {
         auto ev = m_events.front();
@@ -201,7 +201,7 @@ void Device::collect(Sorter &sorter) {
         std::cout << std::format("dev#{}: pushing chunk #{:0{}} ({} entries, {} B) to sorter\n",
                 dev, nrc, count_digits(n_chunks),
                 CYC_CHUNK, display(CYC_CHUNK * sizeof(RX)));
-        sorter.push(m_data.front());
+        sorter.push(m_data.front(), height);
         m_events.pop_front();
         m_data.pop_front();
     }
