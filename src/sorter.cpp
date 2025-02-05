@@ -3,16 +3,32 @@
 #include <atomic>
 #include <barrier>
 #include <memory>
+#include <mutex>
 #include <print>
 #include <iostream>
+
+#ifndef SORTER
+#define SORTER 1
+#endif
 
 #define BOOST_THREAD_VERSION 5
 #include <boost/thread/executors/basic_thread_pool.hpp>
 #include <boost/thread/future.hpp>
-#include <boost/unordered/concurrent_flat_set.hpp>
+#include <boost/unordered/concurrent_flat_set.hpp> // 0
+#include <boost/unordered/unordered_flat_set.hpp>  // 1
+#include <boost/unordered/unordered_set.hpp>       // 2
+#include <unordered_set>                           // 3
 
 #include "util.hpp"
+
+#ifdef BMARK // for bmark/sorter.cpp
+struct CudaSearcher {
+    R *d;
+    Rg<R> write_solution(unsigned, size_t sz);
+};
+#else
 #include "searcher_cuda.h"
+#endif
 
 struct hasher {
     size_t operator()(const R &v) const {
@@ -26,13 +42,35 @@ struct hasher {
     }
 };
 
+#if SORTER == 0
 struct alignas(64) CSR : boost::concurrent_flat_set<R, hasher> {
 };
+#elif SORTER == 1
+struct alignas(64) CSR : boost::unordered_flat_set<R, hasher> {
+    std::mutex mtx;
+};
+#elif SORTER == 2
+struct alignas(64) CSR : boost::unordered_set<R, hasher> {
+    std::mutex mtx;
+};
+#elif SORTER == 3
+struct alignas(64) CSR : std::unordered_set<R, hasher> {
+    std::mutex mtx;
+};
+#elif SORTER == 4
+struct alignas(64) CSR : boost::unordered_flat_set<R, hasher> {
+    std::atomic_flag spin;
+};
+#endif
 
 Sorter::Sorter(CudaSearcher &p)
     : parent{ p }, dedup{}, total{},
       pool{ new boost::basic_thread_pool{} },
-      sets{ new CSR[256][17]{} } {
+#ifndef SORTER_256
+      sets{ new CSR[256 * 17]{} } {
+#else
+      sets{ new CSR[256]{} } {
+#endif
     static_assert(std::alignment_of_v<decltype(sets[0])> >= 64);
 }
 
@@ -44,26 +82,68 @@ Sorter::~Sorter() {
 void Sorter::join() {
     pool->close();
     pool->join();
+    std::print("sorter: finalizing\n");
+#ifndef SORTER_NPARF
+    delete pool;
+    pool = new boost::basic_thread_pool{};
+#endif
     for (auto pos = 0u; pos <= 255u; pos++) {
+#ifndef SORTER_256
         auto sz = 0ull;
         for (auto cnt = 0u; cnt <= 16u; cnt++)
-            sz += sets[pos][cnt].size();
+            sz += sets[pos * 17 + cnt].size();
+#else
+        auto sz = sets[pos].size();
+#endif
         if (!sz) {
             parent.write_solution(pos, 0zu);
             continue;
         }
-        auto [ptr, _] = parent.write_solution(pos, sz);
+        auto r = parent.write_solution(pos, sz);
+#ifndef SORTER_NPARF
+        boost::async(*pool, [=,this] {
+#endif
+        auto ptr = r.ptr;
+#ifndef SORTER_256
         for (auto cnt = 0u; cnt <= 16u; cnt++) {
-            auto &set = sets[pos][cnt];
+            auto &set = sets[pos * 17 + cnt];
+#else
+            auto &set = sets[pos];
+#endif
+#if defined(BMARK) && SORTER >= 2 && SORTER <= 3
+#ifndef SORTER_256
+            std::print("sorter: 0b{:08b}/{:2}={} ({}B)\n",
+                    pos, cnt, set.size(), display(set.size() * sizeof(R)));
+#else
+            std::print("sorter: 0b{:08b}={} ({}B)\n",
+                    pos, set.size(), display(set.size() * sizeof(R)));
+#endif
+#endif
+#if SORTER == 0
             set.cvisit_all([&](R v) mutable {
                 *ptr++ = v;
             });
+#else
+            for (auto v : set)
+                *ptr++ = v;
+#endif
             set.clear();
+#ifndef SORTER_256
         }
+#endif
+        if (ptr != r.ptr + sz)
+            throw std::runtime_error{ "cvisit_all faulty" };
+#ifndef SORTER_NPARF
+        });
+#endif
     }
+#ifndef SORTER_NPARF
+    pool->close();
+    pool->join();
+#endif
 }
 
-#define N_PAGES 6
+#define N_PAGES 48
 #define N (N_PAGES * 4096ull / sizeof(RX))
 
 void Sorter::push(Rg<RX> r, unsigned height) {
@@ -81,21 +161,44 @@ void Sorter::push(Rg<RX> r, unsigned height) {
         throw std::runtime_error{ std::format("internal error: distributing {} to {} with {} each",
                 r.len, n, amount) };
     auto deleter = [=,this]{
+#ifndef BMARK // for bmark/sorter.cpp
         delete [] r.ptr;
+#endif
         std::atomic_ref atm_d{ dedup };
         std::atomic_ref atm_n{ total };
-        auto d = atm_d.load(std::memory_order_relaxed);
-        auto n = atm_n.load(std::memory_order_relaxed);
-        std::print("sorter: {}/{} = {}B ({:.2f}x)\n",
-                d, n, display(d * sizeof(R)), 1.0 * n / d);
+        auto val_d = atm_d.load(std::memory_order_relaxed);
+        auto val_n = atm_n.load(std::memory_order_relaxed);
+        std::print("sorter: {}/{} = {}B (+{} = {} x {}) ({:.2f}x)\n",
+                val_d, val_n, display(val_d * sizeof(R)),
+                r.len, n, amount,
+                1.0 * val_n / val_d);
     };
     auto barrier = std::make_shared<std::barrier<decltype(deleter)>>(n, deleter);
     for (auto i = 0u; i < n; i++)
         boost::async(*pool, [=,this](RX *ptr, size_t len) {
             auto local = 0zu;
-            for (auto i = 0zu; i < len; i++)
-                if (sets[ptr[i].ea][ptr[i].get_cnt(height)].insert(ptr[i])) // slice
+            for (auto i = 0zu; i < len; i++) {
+#ifndef SORTER_256
+                auto &set = sets[ptr[i].ea * 17 + ptr[i].get_cnt(height)];
+#else
+                auto &set = sets[ptr[i].ea];
+#endif
+#if SORTER == 0
+                if (set.insert(ptr[i])) // slice
                     local++;
+#else
+#if SORTER == 4
+                while (set.spin.test_and_set(std::memory_order_acquire));
+#else
+                std::lock_guard lock{ set.mtx };
+#endif
+                if (set.insert(ptr[i]).second) // slice
+                    local++;
+#if SORTER == 4
+                set.spin.clear(std::memory_order_release);
+#endif
+#endif
+            }
             std::atomic_ref atm_d{ dedup };
             std::atomic_ref atm_n{ total };
             atm_d.fetch_add(local, std::memory_order_relaxed);

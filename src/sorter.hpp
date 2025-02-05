@@ -17,5 +17,5 @@ private:
     CudaSearcher &parent;
     size_t dedup, total;
     boost::executors::basic_thread_pool *pool;
-    CSR (*sets)[17];
+    CSR *sets;
 };
