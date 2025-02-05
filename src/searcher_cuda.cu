@@ -1,5 +1,7 @@
 #include "searcher_cuda.h"
 #include "util.hpp"
+#include "util.cuh"
+#include "frow.h"
 #include "sn.cuh"
 
 #include <cuda.h>
@@ -12,8 +14,6 @@
 #include <format>
 #include <unistd.h>
 #include <cstdio>
-
-#define MAX_SOLUTIONS (1ull << 24)
 
 /**
  * 128 resident grids / device (Concurrent Kernel Execution)
@@ -28,122 +28,7 @@
  * 64KiB constant memory (8KiB cache)
  */
 
-#define C(ans) { chk_impl((ans), __FILE__, __LINE__); }
-
-void chk_impl(cudaError_t code, const char *file, int line) {
-    if (code != cudaSuccess) {
-        throw std::runtime_error{
-            std::format("CUDA: {}: {} @ {}:{}\n",
-                    cudaGetErrorName(code), cudaGetErrorString(code),
-                    file, line) };
-    }
-}
-
-void chk_impl(CUresult code, const char *file, int line) {
-    const char *pn = "???", *ps = "???";
-    cuGetErrorName(code, &pn);
-    cuGetErrorString(code, &ps);
-    if (code != CUDA_SUCCESS) {
-        throw std::runtime_error{
-            std::format("CUDA Driver: {}: {} @ {}:{}\n", pn, ps, file, line) };
-    }
-}
-
-static int n_devices;
-static const frow_info_t *h_frowInfoL, *h_frowInfoR;
-static frow_t *d_frowDataL[128][16], *d_frowDataR[128][16];
-
-void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR) {
-    C(cudaGetDeviceCount(&n_devices));
-    n_devices = min(n_devices, 1);
-    std::cout << std::format("n_devices = {}\n", n_devices);
-    if (!n_devices)
-        throw std::runtime_error{ "no CUDA device" };
-
-    h_frowInfoL = fiL;
-    h_frowInfoR = fiR;
-    for (auto d = 0; d < n_devices; d++) {
-        C(cudaSetDevice(d));
-        for (auto i = 0; i < 16; i++) {
-            C(cudaMalloc(&d_frowDataL[d][i], fiL[i].sz[5] * sizeof(frow_t)));
-            C(cudaMalloc(&d_frowDataR[d][i], fiR[i].sz[5] * sizeof(frow_t)));
-            C(cudaMemcpyAsync(d_frowDataL[d][i], fiL[i].data,
-                        fiL[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
-            C(cudaMemcpyAsync(d_frowDataR[d][i], fiR[i].data,
-                        fiR[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
-        }
-        C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
-        size_t drplc;
-        C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
-        std::cout << std::format("dev{}.DRPLC = {}\n", d, drplc);
-    }
-}
-
 #define CYC_CHUNK (32ull * 1048576ull / sizeof(RX))
-
-template <unsigned H>
-__device__ __forceinline__
-void parse_R(R cfg, uint64_t &empty_area, uint32_t &nm_cnt, uint32_t ex[4]) {
-    static_assert(H <= 8);
-    static_assert(H >= 1);
-    if constexpr (H == 8) {
-        empty_area = (uint64_t)cfg.xaL | cfg.xaH & 0x00ffffffu;
-        nm_cnt = cfg.xaH >> 24;
-        return;
-    }
-    if constexpr (H == 7) {
-        empty_area = (uint64_t)cfg.xaL | cfg.xaH & 0x0000ffffu;
-        nm_cnt = cfg.xaH >> 24;
-    }
-    if constexpr (H == 6) {
-        empty_area = (uint64_t)cfg.xaL | cfg.xaH >> 16 & 0xffu;
-        nm_cnt = cfg.xaH >> 24;
-        ex[3] = cfg.xaH | 0xffff0000u;
-    }
-    if constexpr (H == 5) {
-        empty_area = cfg.xaL;
-        nm_cnt = cfg.xaH >> 24;
-        ex[3] = cfg.xaH | 0xff000000u;
-    }
-    if constexpr (H <= 4) {
-        empty_area = cfg.xaL & 0x00ffffffu;
-        nm_cnt = cfg.xaL >> 24;
-        ex[3] = cfg.xaH;
-    }
-    if constexpr (H <= 6)
-        ex[2] = cfg.ex2;
-    ex[1] = cfg.ex1;
-    ex[0] = cfg.ex0;
-}
-
-template <unsigned H> // height - 1
-__device__ __forceinline__
-RX assemble_R(uint64_t empty_area, uint32_t nm_cnt, uint32_t ex[4]) {
-    static_assert(H <= 7);
-    __builtin_assume(!(empty_area & 0b11111111u));
-    RX cfg;
-    cfg.ea = empty_area >> 8 & 0xffu;
-    if constexpr (H == 7) {
-        cfg.xaL = empty_area >> 16; 
-        cfg.xaH = empty_area >> 48 | nm_cnt << 24; 
-    }
-    if constexpr (H == 6) {
-        cfg.xaL = empty_area >> 16; 
-        cfg.xaH = __byte_perm(__byte_perm(ex[3], nm_cnt, 0x4f10u),
-                empty_area >> 32, 0x3610u);
-    }
-    if constexpr (H == 5) {
-        cfg.xaL = empty_area >> 16; 
-        cfg.xaH = __byte_perm(ex[3], nm_cnt, 0x4210u);
-    }
-    if constexpr (H <= 4)
-        cfg.xaH = ex[3];
-    if constexpr (H <= 6)
-        cfg.ex2 = ex[2];
-    cfg.ex1 = ex[1];
-    cfg.ex0 = ex[0];
-    return cfg;
-}
 
 template <unsigned H>
 __global__
@@ -157,27 +42,25 @@ void d_row_search(
         // input vector
         const R *cfgs, const uint64_t n_cfgs,
         // constants
+        uint8_t ea,
         const frow_t *f0L, const uint32_t f0Lsz,
         const frow_t *f0R, const uint32_t f0Rsz) {
     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
     if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
-    auto cfg = cfgs[idx / f0Rsz / f0Lsz];
-    auto fL  = f0L [idx / f0Rsz % f0Lsz];
-    auto fR  = f0R [idx % f0Rsz];
-    uint64_t empty_area;
-    uint32_t nm_cnt;
-    uint32_t ex[4]{ 0xffffffffu };
-    parse_R<H>(cfg, empty_area, nm_cnt, ex);
-    if (fL.shape & ~empty_area) [[unlikely]] return;
-    if (fR.shape & ~empty_area) [[unlikely]] return;
+    auto r = cfgs[idx / f0Rsz / f0Lsz];
+    auto fL = f0L[idx / f0Rsz % f0Lsz];
+    auto fR = f0R[idx % f0Rsz];
+    auto cfg = parse_R<H>(r, ea);
+    if (fL.shape & ~cfg.empty_area) [[unlikely]] return;
+    if (fR.shape & ~cfg.empty_area) [[unlikely]] return;
     if (fL.shape & fR.shape) [[unlikely]] return;
-    d_push(nm_cnt, ex, fL.nm0123);
-    d_push(nm_cnt, ex, fR.nm0123);
-    d_sn(nm_cnt, ex);
-    if (!d_uniq_chk(nm_cnt, ex)) [[unlikely]] return;
-    empty_area &= ~fL.shape;
-    empty_area &= ~fR.shape;
-    auto ocfg = assemble_R<H - 1>(empty_area, nm_cnt, ex);
+    d_push(cfg.nm_cnt, cfg.ex, fL.nm0123);
+    d_push(cfg.nm_cnt, cfg.ex, fR.nm0123);
+    d_sn(cfg.nm_cnt, cfg.ex);
+    if (!d_uniq_chk(cfg.nm_cnt, cfg.ex)) [[unlikely]] return;
+    cfg.empty_area &= ~fL.shape;
+    cfg.empty_area &= ~fR.shape;
+    auto ocfg = assemble_R<H - 1>(cfg);
     auto out = __nv_atomic_fetch_add(n_outs, 1,
             __NV_ATOMIC_ACQUIRE, __NV_THREAD_SCOPE_DEVICE);
 spin:
@@ -263,11 +146,6 @@ std::pair<uint64_t, uint32_t> balance(uint64_t n) {
     return { (n + 511) / 512, 512 };
 }
 
-static constexpr auto count_digits(unsigned long long v) {
-    if (v <= 9) return 1ull;
-    return 1ull + count_digits(v / 10);
-}
-
 struct Device {
     int dev;
     cudaStream_t c_stream, m_stream;
@@ -351,9 +229,9 @@ struct Device {
         auto d_f0L = d_frowDataL[dev][pos >> 0 & 0xfu];
         auto d_f0R = d_frowDataR[dev][pos >> 4 & 0xfu];
         auto [b, t] = balance(sz);
-        std::cout << std::format("dev#{}: 0b{:08b}<<<{:7}, {:3}>>> = {:<6}*L{:<5}*R{:<5}*{}B => {:9}B\n",
+        std::cout << std::format("dev#{}: 0b{:08b}<<<{:8}, {:3}>>> = {:<6}*L{:<5}*R{:<5} => {:>9}B\n",
                 dev, pos, b, t,
-                len, fanoutL, fanoutR, display(sizeof(R)), display(sz * sizeof(R)));
+                len, fanoutL, fanoutR, display(sz * sizeof(R)));
         C(cudaSetDevice(dev));
         C(cudaMemAdvise(ptr, len * sizeof(R), cudaMemAdviseSetReadMostly, dev));
         C(cudaStreamAttachMemAsync(c_stream, ptr, len * sizeof(R)));
@@ -366,6 +244,7 @@ struct Device {
                 // input vector
                 ptr, len,
                 // constants
+                pos,
                 d_f0L, fanoutL,
                 d_f0R, fanoutR);
         workload += b * t;
@@ -516,54 +395,4 @@ Rg<R> *CudaSearcher::write_solutions(size_t sz) {
         C(cudaMallocManaged(&ptr, sz * sizeof(R), cudaMemAttachHost));
     }
     return solutions;
-}
-
-void show_devices() {
-  int nDevices;
-  C(cudaGetDeviceCount(&nDevices));
-
-  printf("Number of devices: %d\n", nDevices);
-
-  for (int i = 0; i < nDevices; i++) {
-    cudaDeviceProp prop;
-    C(cudaGetDeviceProperties(&prop, i));
-    printf("Device Number: %d\n", i);
-    printf("  Device name: %s\n", prop.name);
-    printf("  Capability: %d.%d\n", prop.major, prop.minor);
-    printf("  MP: %d\n", prop.multiProcessorCount);
-    printf("  Memory Clock Rate (MHz): %d\n", prop.memoryClockRate/1024);
-    printf("  Memory Bus Width (bits): %d\n", prop.memoryBusWidth);
-    printf("  Peak Memory Bandwidth (GB/s): %.1f\n", 2.0*prop.memoryClockRate*(prop.memoryBusWidth/8)/1.0e6);
-    printf("  Warp-size: %d\n", prop.warpSize);
-    printf("  Threads/block: %d\n", prop.maxThreadsPerBlock);
-    printf("  Threads/mp: %d\n", prop.maxThreadsPerMultiProcessor);
-    printf("  Async engines: %d\n", prop.asyncEngineCount);
-    printf("  32-bit Registers per block: %d\n", prop.regsPerBlock);
-    printf("  32-bit Registers per mp: %d\n", prop.regsPerMultiprocessor);
-    printf("  Concurrent kernels: %s\n", prop.concurrentKernels ? "yes" : "no");
-    printf("  Concurrent computation/communication: %s\n",prop.deviceOverlap ? "yes" : "no");
-    printf("  Sparse: %s\n",prop.sparseCudaArraySupported ? "yes" : "no");
-    printf("  Managed mem: %s\n",prop.managedMemory ? "yes" : "no");
-    printf("  Deferred: %s\n",prop.deferredMappingCudaArraySupported ? "yes" : "no");
-    printf("  Map host mem: %s\n",prop.canMapHostMemory ? "yes" : "no");
-    printf("  Unified addr: %s\n",prop.unifiedAddressing ? "yes" : "no");
-    printf("  Unified fp: %s\n",prop.unifiedFunctionPointers ? "yes" : "no");
-    printf("  Concurrent managed access: %s\n",prop.concurrentManagedAccess ? "yes" : "no");
-    printf("  PMA: %s\n",prop.pageableMemoryAccess ? "yes" : "no");
-    printf("  ECC: %s\n",prop.ECCEnabled ? "yes" : "no");
-    printf("  Cooperative launch: %s\n",prop.cooperativeLaunch ? "yes" : "no");
-    printf("  DMMA from host: %s\n",prop.directManagedMemAccessFromHost ? "yes" : "no");
-    printf("  L2 Cache Size (KiB): %d\n",prop.l2CacheSize / 1024);
-    printf("  Shared mem per block (KiB): %lu\n",prop.sharedMemPerBlock / 1024);
-    printf("  Shared mem per mp (KiB): %lu\n",prop.sharedMemPerMultiprocessor / 1024);
-    printf("  Const mem (B): %lu\n",prop.totalConstMem / 1024);
-    printf("  Global mem (MiB): %lf\n",prop.totalGlobalMem / 1024.0 / 1024);
-    int v;
-    cudaDeviceGetAttribute(&v, cudaDevAttrMemSyncDomainCount, i);
-    printf("  Sync domain: %d\n",v);
-    cudaDeviceGetAttribute(&v, cudaDevAttrSingleToDoublePrecisionPerfRatio, i);
-    printf("  float/double ratio: %d\n", v);
-    cudaDeviceGetAttribute(&v, (cudaDeviceAttr)102, i);
-    printf("  VMM: %d\n", v);
-  }
 }

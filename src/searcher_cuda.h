@@ -9,39 +9,7 @@
 #include <thread>
 #include <vector>
 
-#include <boost/unordered/concurrent_flat_set_fwd.hpp>
-
-struct tt_t {
-    uint64_t shape;
-    uint8_t nm;
-};
-struct frow_t {
-    uint64_t shape;
-    union {
-        uint8_t nm[4];
-        uint32_t nm0123;
-    };
-};
-struct frow_info_t {
-    frow_t *data;
-    uint32_t sz[6];
-};
-void frow_cache(const frow_info_t *fiL, const frow_info_t *fiR);
-
-struct R {
-    uint32_t xaL; // requires parse_R and assemble_R
-    uint32_t xaH; // requires parse_R and assemble_R
-    uint32_t ex0, ex1, ex2;
-
-    bool operator==(const R &other) const = default;
-};
-static_assert(sizeof(R) == 20);
-static_assert(alignof(R) == 4);
-struct RX : R {
-    uint8_t ea;
-};
-static_assert(sizeof(RX) == 24);
-static_assert(alignof(RX) == 4);
+#include "record.h"
 
 template <typename T>
 struct Rg {

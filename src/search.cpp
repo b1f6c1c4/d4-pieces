@@ -16,11 +16,11 @@
 #include <unordered_set>
 
 #include "util.hpp"
+#include "frow.h"
 #include "board.hpp"
 #include "searcher.hpp"
 #include "known.hpp"
 #include "Shape.hpp"
-#include "searcher_cuda.h"
 
 struct Verify : SearcherFactory {
     struct S : Searcher {
@@ -284,8 +284,9 @@ int main(int argc, char *argv[]) {
     auto best = 0zu;
     */
 
-    show_devices();
-    compute_fast_canonical_form();
+    show_gpu_devices();
+    compute_frow_on_cpu();
+    transfer_frow_to_gpu();
 
     std::stop_source stop;
 

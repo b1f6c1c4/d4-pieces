@@ -7,7 +7,7 @@
 #include "board.hpp"
 #include "naming.hpp"
 
-// defined in search.cpp
+// defined in frow.cpp
 extern std::optional<Board<8>> g_board;
 extern std::optional<Naming> g_nme;
 extern unsigned g_sym;
@@ -39,10 +39,6 @@ protected:
 
     virtual bool log(uint64_t v) = 0;
 };
-
-// g_nme and g_sym must be set
-// required before calling Searcher::Searcher
-void compute_fast_canonical_form();
 
 class SearcherFactory {
     uint64_t configs_issue_counter{};
