@@ -21,7 +21,6 @@ uint64_t Searcher::step(Shape<8> empty_area) {
                 cs.size(), sizeof(R) * cs.size() / 1073741824.0,
                 cs.next_size(), sizeof(R) * cs.next_size() / 1073741824.0,
                 1.0 * cs.next_size() / cs.size());
-        if (cs.get_height() == 4) std::abort();
         auto t1 = std::chrono::steady_clock::now();
         cs.search_GPU();
         auto t2 = std::chrono::steady_clock::now();

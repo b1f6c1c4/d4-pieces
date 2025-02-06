@@ -1,6 +1,8 @@
 #include "device.h"
 
 #include <cuda/atomic>
+#include <sys/sysinfo.h>
+#include <unistd.h>
 #include "util.hpp"
 #include "util.cuh"
 #include "kernel.h"
@@ -140,6 +142,25 @@ void Device::recycle(bool last) {
         C(cudaStreamSynchronize(c_stream)); // necessary as kernels may be still finishing
     }
 
+    auto verify_mem = [=,this] {
+        while (true) {
+            auto mem = 4096 * get_avphys_pages();
+            if (mem / (2 * CYC_CHUNK * sizeof(RX)) >= m_data.size())
+                break;
+            std::cout << std::format("mem: only {}B memory availabe, wait\n",
+                    display(mem));
+            if (last) {
+                ::usleep(1000000);
+            } else {
+                ::usleep(500000);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!verify_mem()) return;
+
     cuda::atomic_ref n_reader_chunk{ counters[0] };
     cuda::atomic_ref n_writer_chunk{ counters[1] };
     auto nwc = n_writer_chunk.load(cuda::memory_order_acquire);
@@ -159,6 +180,7 @@ void Device::recycle(bool last) {
         m_data.push_back(r);
         m_events.push_back(ev);
         m_scheduled++;
+        if (!verify_mem()) return;
     }
 
     if (!last)
