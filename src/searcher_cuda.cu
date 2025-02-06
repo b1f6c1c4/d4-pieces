@@ -8,6 +8,7 @@
 #include <cuda.h>
 #include <cuda/atomic>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <deque>
@@ -94,42 +95,47 @@ void CudaSearcher::free() {
 }
 
 void CudaSearcher::search_GPU() {
+    auto last_stat = std::chrono::steady_clock::now();
     Sorter sorter{ *this };
     std::vector<std::unique_ptr<Device>> devs;
     for (auto i = 0; i < n_devices; i++)
         devs.emplace_back(std::make_unique<Device>(i));
+
+    auto maint = [&](auto &&status, bool last = false) {
+        using namespace std::chrono_literals;
+        auto cc = true;
+        auto mc = true;
+        for (auto &dev : devs) {
+            cc &= dev->c_completed();
+            mc &= dev->m_completed();
+            dev->recycle(last);
+            dev->collect(sorter);
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_stat >= 100ms) {
+            auto lines = sorter.print_stats();
+            for (auto &dev : devs)
+                dev->print_stats();
+            last_stat = now;
+            std::cerr << std::format(
+                    "\33[37mheight = {} status = {}\33[K\33[0m\n\33[J\33[{}F",
+                    height, status, devs.size() + lines + 1);
+        }
+        return std::make_pair(cc, mc);
+    };
 
     for (auto ipos = 0u; ipos <= 255u; ipos++) {
         std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
             return dev->workload;
         });
         devs.front()->dispatch(ipos, height, solutions[ipos]);
-        for (auto &dev : devs) {
-            dev->recycle(false);
-            dev->collect(sorter);
-        }
+        maint(std::format("dispatching {}/256", ipos));
     }
-    bool flag;
-    do {
-        flag = true;
-        for (auto &dev : devs) {
-            flag &= dev->c_completed();
-            dev->recycle(false);
-            dev->collect(sorter);
-        }
-    } while (!flag);
-    for (auto &dev : devs) {
-        dev->recycle(true);
-        dev->collect(sorter);
-    }
-    do {
-        flag = true;
-        for (auto &dev : devs) {
-            flag &= dev->m_completed();
-            dev->collect(sorter);
-        }
-    } while (!flag);
+    while (!maint("wait for computation").first);
+    maint("gather tails", true);
+    while (!maint("wait for memory").second);
     devs.clear();
+    maint("wait for sorter (this may take a while)");
     sorter.join();
     height--;
 }

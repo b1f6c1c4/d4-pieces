@@ -13,9 +13,11 @@ struct Sorter {
     void push(Rg<RX> r);
     void join();
 
+    unsigned print_stats() const;
+
 private:
     CudaSearcher &parent;
-    size_t dedup, total;
+    size_t dedup, total, pending;
     boost::executors::basic_thread_pool *pool;
     CSR *sets;
 };

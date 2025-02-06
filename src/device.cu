@@ -230,3 +230,28 @@ void Device::collect(Sorter &sorter) {
         m_data.pop_front();
     }
 }
+
+void Device::print_stats() const {
+    cuda::atomic_ref n_reader_chunk{ counters[0] };
+    cuda::atomic_ref n_writer_chunk{ counters[1] };
+    auto nrc = n_reader_chunk.load(cuda::memory_order_relaxed);
+    auto nwc = n_writer_chunk.load(cuda::memory_order_relaxed);
+
+    std::stringstream ss;
+    ss << "\33[37mdev" << dev << " [";
+    for (auto i = 0ull; i < n_chunks; i++) {
+        auto c = i < nrc ? i + n_chunks : i;
+        if (c < nrc)
+            ss << " ";
+        else if (c < m_scheduled)
+            ss << "\33[35mR";
+        else if (c < nwc)
+            ss << "\33[90m-";
+        else if (c == nwc)
+            ss << "\33[36mW";
+        else
+            ss << " ";
+    }
+    ss << "\33[37m]\33[K\33[0m\n";
+    std::cerr << ss.str();
+}

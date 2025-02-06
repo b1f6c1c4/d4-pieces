@@ -6,10 +6,7 @@
 #include <mutex>
 #include <print>
 #include <iostream>
-
-#ifndef SORTER
-#define SORTER 1
-#endif
+#include <fstream>
 
 #define BOOST_THREAD_VERSION 5
 #include <boost/thread/executors/basic_thread_pool.hpp>
@@ -64,7 +61,7 @@ struct alignas(64) CSR : boost::unordered_flat_set<R, hasher> {
 #endif
 
 Sorter::Sorter(CudaSearcher &p)
-    : parent{ p }, dedup{}, total{},
+    : parent{ p }, dedup{}, total{}, pending{},
       pool{ new boost::basic_thread_pool{} },
 #ifdef SORTER_N
       sets{ new CSR[256 * SORTER_N]{} } {
@@ -150,6 +147,8 @@ void Sorter::push(Rg<RX> r) {
     static_assert(N_PAGES * 4096ull % sizeof(RX) == 0, "RX not aligned to N-page boundry");
     if ((size_t)r.ptr % 4096ull)
         throw std::runtime_error{ "ptr not aligned to page boundry" };
+    std::atomic_ref atm_p{ pending };
+    atm_p.fetch_add(r.len, std::memory_order_relaxed);
     auto n = (r.len + N - 1) / N;
     auto amount = N;
     auto max_n = 64ull * boost::thread::hardware_concurrency();
@@ -166,6 +165,8 @@ void Sorter::push(Rg<RX> r) {
 #endif
         std::atomic_ref atm_d{ dedup };
         std::atomic_ref atm_n{ total };
+        std::atomic_ref atm_p{ pending };
+        atm_p.fetch_sub(r.len, std::memory_order_relaxed);
         auto val_d = atm_d.load(std::memory_order_relaxed);
         auto val_n = atm_n.load(std::memory_order_relaxed);
         std::print("sorter: {}/{} = {}B (+{} = {} x {}) ({:.2f}x)\n",
@@ -205,4 +206,77 @@ void Sorter::push(Rg<RX> r) {
             atm_n.fetch_add(len, std::memory_order_relaxed);
             barrier->arrive_and_drop();
         }, r.ptr + i * amount, std::min(r.len - i * amount, amount));
+}
+
+#define C (512ull * 1048576ull)
+unsigned Sorter::print_stats() const {
+    auto mem_total = 0ull;
+    auto mem_free = 0ull;
+    for (std::ifstream fin("/proc/meminfo"); fin; ) {
+        unsigned long long x;
+        std::string s;
+        fin >> s;
+        if (fin.eof())
+            break;
+        if (s == "MemTotal:")
+            fin >> mem_total, mem_total *= 1024, fin >> s;
+        else if (s == "MemFree:")
+            fin >> mem_free, mem_free *= 1024, fin >> s;
+        else
+            fin >> x, fin >> s;
+    }
+
+    std::atomic_ref atm_p{ pending };
+    auto p = atm_p.load(std::memory_order_relaxed) * sizeof(RX);
+
+    auto sz = 0ull;
+    auto bkt = 0ull;
+#ifdef SORTER_N
+    for (auto i = 0u; i < 256u * SORTER_N; i++) {
+#else
+    for (auto i = 0u; i < 256u; i++) {
+#endif
+        auto &set = sets[i];
+#if SORTER == 4
+        while (set.spin.test_and_set(std::memory_order_acquire));
+#elif SORTER > 0
+        std::lock_guard lock{ set.mtx };
+#endif
+        sz += set.size() * sizeof(R);
+        bkt += set.bucket_count() * sizeof(R);
+#if SORTER == 4
+        set.spin.clear(std::memory_order_release);
+#endif
+    }
+
+#define WIDTH 66
+    auto lines = 0u;
+    auto w = 0;
+    std::stringstream ss;
+    auto push = [&](int color, char c) {
+        if (++w == 67) {
+            ss << "\33[K\33[90m|\n     |";
+            w = 1;
+            lines++;
+        }
+        ss << "\33[" << color << 'm' << c;
+    };
+    ss << "\33[37msys  [";
+    for (auto i = 0ull; i < (mem_total - mem_free + C / 2) / C; i++)
+        push(31, '|');
+    for (auto i = 0ull; i < (mem_free + C / 2) / C; i++)
+        push(30, ' ');
+    ss << "\33[37m]\33[K\33[0m\n";
+    w = 0, lines++;
+    ss << "\33[37mmem  [";
+    for (auto i = 0ull; i < (p + C / 2) / C ; i++)
+        push(95, 'R');
+    for (auto i = 0ull; i < (sz + C / 2) / C ; i++)
+        push(35, '#');
+    for (auto i = (sz + C / 2) / C; i < (bkt + C / 2) / C ; i++)
+        push(35, '_');
+    ss << "\33[37m]\33[K\33[0m\n";
+    w = 0, lines++;
+    std::cerr << ss.str();
+    return lines;
 }

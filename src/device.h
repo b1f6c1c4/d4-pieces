@@ -28,4 +28,6 @@ struct Device {
     void dispatch(unsigned pos, unsigned height, Rg<R> cfgs);
     void recycle(bool last);
     void collect(Sorter &sorter);
+
+    void print_stats() const;
 };
