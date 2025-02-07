@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <stop_token>
 #include <sys/mman.h>
+#include <pthread.h>
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
@@ -244,6 +245,7 @@ std::jthread monitor(const SearcherFactory &sf) {
 
 int main(int argc, char *argv[]) {
     using namespace std::string_literals;
+    pthread_setname_np(pthread_self(), "main");
 
     g_board = Board<8>::from_file(argv++[1]);
     std::print("working on a board of size={} left={} count={}\n",

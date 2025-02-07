@@ -3,6 +3,7 @@
 #include <cuda/atomic>
 #include <chrono>
 #include <sys/sysinfo.h>
+#include <pthread.h>
 #include <unistd.h>
 #include "util.hpp"
 #include "util.cuh"
@@ -49,8 +50,7 @@ static std::pair<uint64_t, uint32_t> balance(uint64_t n) {
     return { (n + 511) / 512, 512 };
 }
 
-Device::Work::Work(WL work, int dev, unsigned height) : p{} {
-    C(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
+Device::Work::Work(WL work, int dev, unsigned height) : WL{ work }, p{} {
     auto l = pos >> 0 & 0b1111u;
     auto r = pos >> 4 & 0b1111u;
     auto szid = min(height - 1, 5);
@@ -82,6 +82,7 @@ Device::Device(int d, unsigned h, Sorter &s)
 }
 
 void Device::c_entry() {
+    pthread_setname_np(pthread_self(), std::format("dev#{}.c", dev).c_str());
     C(cudaSetDevice(dev));
 
     C(cudaStreamCreateWithFlags(&c_stream, cudaStreamNonBlocking));
@@ -102,29 +103,45 @@ void Device::c_entry() {
 again:
     cv.wait_for(lock, 50ms, [this]{ return xc_closed || !xc_queue.empty(); });
 
-    // synchronously free up device inputs copies
+    // synchronously free up host inputs copies
     lock.unlock();
+    for (auto &work : c_works) {
+        if (!work.ptr)
+            continue;
+        auto err = cudaEventQuery(work.ev_m);
+        if (err == cudaErrorNotReady)
+            continue;
+        C(err);
+        C(cudaEventDestroy(work.ev_m));
+        work.ev_m = cudaEvent_t{};
+        std::cout << std::format("dev#{}: free up {}B host input mem ({} entries)\n",
+                dev, display(work.len * sizeof(R)), work.len);
+        delete [] work.ptr;
+        work.ptr = nullptr;
+    }
+
+    // synchronously free up device inputs copies
     while (!c_works.empty()) {
         auto work = c_works.front();
-        auto err = cudaEventQuery(work.ev);
+        auto err = cudaEventQuery(work.ev_c);
         if (err == cudaErrorNotReady)
             break;
         C(err);
-        lock.unlock();
-        { // free up logic
-            C(cudaEventDestroy(work.ev));
-            auto wl = c_workload.load(std::memory_order_relaxed);
-            auto fin = c_finished.fetch_add(work.load, std::memory_order_relaxed) + work.load;
-            std::cout << std::format("dev#{}: {}/{} = {:.2f}% done, free up {}B ({} entries)\n",
-                    dev, display(fin), display(wl), 100.0 * fin / wl,
-                    display(work.len * sizeof(RX)), work.len);
-            C(cudaFree(work.p));
-        }
+        C(cudaEventDestroy(work.ev_c));
+        work.ev_c = cudaEvent_t{};
+        auto wl = c_workload.load(std::memory_order_relaxed);
+        auto fin = c_finished.fetch_add(work.load, std::memory_order_relaxed) + work.load;
+        std::cout << std::format("dev#{}: {}/{} = {:.2f}% done, free up {}B device mem ({} entries)\n",
+                dev, display(fin), display(wl), 100.0 * fin / wl,
+                display(work.len * sizeof(R)), work.len);
+        C(cudaFree(work.p));
+        work.p = nullptr;
         lock.lock();
         xc_pending--;
         c_works.pop_front();
-        std::cout << std::format("dev#{}: {}B ({} entries) freed, {} pending\n",
-                dev, display(work.len * sizeof(RX)), work.len, xc_pending);
+        lock.unlock();
+        std::cout << std::format("dev#{}: {}B ({} entries) device mem freed\n",
+                dev, display(work.len * sizeof(R)), work.len);
     }
 
     // dispatch more
@@ -141,6 +158,8 @@ again:
             C(cudaMallocAsync(&work.p, work.len * sizeof(R), c_stream));
             C(cudaMemcpyAsync(work.p, work.ptr, work.len * sizeof(R),
                         cudaMemcpyHostToDevice, c_stream));
+            C(cudaEventCreateWithFlags(&work.ev_m, cudaEventDisableTiming));
+            C(cudaEventRecord(work.ev_m, c_stream));
             launch(work.b, work.t, c_stream, height,
                     // output ring buffer
                     ring_buffer, n_outs,
@@ -152,7 +171,8 @@ again:
                     work.pos,
                     work.d_f0L, work.fanoutL,
                     work.d_f0R, work.fanoutR);
-            C(cudaEventRecord(work.ev, c_stream));
+            C(cudaEventCreateWithFlags(&work.ev_c, cudaEventDisableTiming));
+            C(cudaEventRecord(work.ev_c, c_stream));
             c_works.emplace_back(work);
         }
         lock.lock();
@@ -168,20 +188,21 @@ again:
         C(cudaMemcpyAsync(&used, n_outs, sizeof(used), cudaMemcpyDeviceToHost, c_stream));
         C(cudaStreamSynchronize(c_stream));
         C(cudaStreamDestroy(c_stream));
+        c_stream = cudaStream_t{};
         C(cudaFree(n_outs));
+        n_outs = nullptr;
     }
     lock.lock();
+    std::cout << std::format("dev#{}: finalizing with xc_used={}\n", dev, used);
     xc_used = used;
     cv.notify_all();
 }
 
 void Device::m_entry() {
+    pthread_setname_np(pthread_self(), std::format("dev#{}.m", dev).c_str());
     C(cudaSetDevice(dev));
 
     C(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
-
-    cuda::atomic_ref n_reader_chunk{ counters[0] };
-    cuda::atomic_ref n_writer_chunk{ counters[1] };
 
     /*
     auto verify_mem = [=,this] {
@@ -207,9 +228,14 @@ void Device::m_entry() {
     std::unique_lock lock{ mtx };
     cv.wait(lock, [this]{ return xc_ready; });
 
+    // before xc_ready, counters are not yet setup
+    cuda::atomic_ref n_reader_chunk{ counters[0] };
+    cuda::atomic_ref n_writer_chunk{ counters[1] };
+
 again:
     cv.wait_for(lock, 50ms, [this]{ return xc_used.has_value(); });
     auto used = std::move(xc_used);
+    xc_used.reset();
     lock.unlock();
 
     unsigned long long nwc;
@@ -276,14 +302,19 @@ again:
     }
 
     lock.lock();
-    if (!!m_events.empty() || !xc_closed)
+    if (!m_events.empty() || !xc_closed)
         goto again;
 
+    xm_completed = true;
+    cv.notify_all();
     lock.unlock();
     C(cudaStreamSynchronize(m_stream));
     C(cudaStreamDestroy(m_stream));
+    m_stream = cudaStream_t{};
     C(cudaFree(ring_buffer));
+    ring_buffer = nullptr;
     C(cudaFree(counters));
+    counters = nullptr;
 }
 
 void Device::dispatch(WL cfgs) {
@@ -315,16 +346,18 @@ uint64_t Device::get_workload() const {
 void Device::print_stats() const {
     cuda::atomic_ref n_reader_chunk{ counters[0] };
     cuda::atomic_ref n_writer_chunk{ counters[1] };
-    auto nrc = n_reader_chunk.load(cuda::memory_order_relaxed);
-    auto nwc = n_writer_chunk.load(cuda::memory_order_relaxed);
 
     std::stringstream ss;
     ss << "\33[37mdev" << dev << " [";
 
     std::unique_lock lock{ mtx };
     if (!xc_ready) {
-        ss << "initializing ...";
+        ss << "initializing]";
+    } else if (xm_completed) {
+        ss << "completed]";
     } else {
+        auto nrc = n_reader_chunk.load(cuda::memory_order_relaxed);
+        auto nwc = n_writer_chunk.load(cuda::memory_order_relaxed);
         for (auto i = 0ull; i < n_chunks; i++) {
             auto c = i < nrc ? i + n_chunks : i;
             if (c < nrc)
@@ -343,12 +376,10 @@ void Device::print_stats() const {
         ss << "\33[37m]";
         if (xc_pending)
             ss << std::format(" {:.02f}%/{:d}", 100.0 * fin / wl, xc_pending);
-        if (xm_completed)
-            ss << " completed";
-        else if (xc_closed)
-            ss << " closed";
-        else
+        if (!xc_queue.empty())
             ss << std::format("/{:d}", xc_queue.size());
+        if (xc_closed)
+            ss << " closed";
     }
     lock.unlock();
     ss << "\33[K\33[0m\n";

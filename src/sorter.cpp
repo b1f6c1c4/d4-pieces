@@ -62,7 +62,10 @@ struct alignas(64) CSR : boost::unordered_flat_set<R, hasher> {
 
 Sorter::Sorter(CudaSearcher &p)
     : parent{ p }, dedup{}, total{}, pending{},
-      pool{ new boost::basic_thread_pool{} },
+      pool{ new boost::basic_thread_pool{
+          boost::thread::hardware_concurrency(),
+          [](auto &&) { pthread_setname_np(pthread_self(), "sorter"); }
+      } },
 #ifdef SORTER_N
       sets{ new CSR[256 * SORTER_N]{} } {
 #else
@@ -82,7 +85,10 @@ void Sorter::join() {
     std::print("sorter: finalizing\n");
 #ifndef SORTER_NPARF
     delete pool;
-    pool = new boost::basic_thread_pool{};
+    pool = new boost::basic_thread_pool{
+        boost::thread::hardware_concurrency(),
+        [](auto &&) { pthread_setname_np(pthread_self(), "sorter-f"); }
+    };
 #endif
     for (auto pos = 0u; pos <= 255u; pos++) {
 #ifdef SORTER_N

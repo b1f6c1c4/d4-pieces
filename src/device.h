@@ -17,7 +17,7 @@ struct WL : Rg<R> {
 
 class Device {
     struct Work : WL {
-        cudaEvent_t ev;
+        cudaEvent_t ev_m, ev_c;
         uint64_t sz;
         uint32_t b, t;
         const frow_t *d_f0L, *d_f0R;

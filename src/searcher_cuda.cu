@@ -7,6 +7,8 @@
 
 #include <cuda.h>
 #include <cuda/atomic>
+#include <linux/kcmp.h>
+#include <sys/syscall.h>
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -76,8 +78,8 @@ spin:
 CudaSearcher::CudaSearcher(uint64_t empty_area)
     : solutions{}, height{ (std::bit_width(empty_area) + 8u - 1u) / 8u } {
     auto &r = solutions[empty_area & 0xffu];
-    C(cudaMallocManaged(&r.ptr, sizeof(R)));
-    r.ptr[0] = RX{ (uint32_t)(empty_area >> 8), (uint32_t)(empty_area >> 8 + 32) };
+    r.ptr = new R[1];
+    r.ptr[0] = R{ (uint32_t)(empty_area >> 8), (uint32_t)(empty_area >> 8 + 32) };
     r.len = 1;
 }
 
@@ -103,7 +105,10 @@ void CudaSearcher::search_GPU() {
     std::mutex mtx;
     auto done = false;
     std::condition_variable cv;
-    std::jthread thr{ [&,this] {
+    std::jthread monitor{ [&,this] {
+        pthread_setname_np(pthread_self(), "monitor");
+        auto sep = syscall(SYS_kcmp, getpid(), getpid(), KCMP_FILE, 1, 2) != 0;
+        auto last = 0u;
         using namespace std::chrono_literals;
         std::unique_lock lock{ mtx };
         while (true) {
@@ -111,12 +116,13 @@ void CudaSearcher::search_GPU() {
             if (done)
                 break;
 
-            auto lines = sorter.print_stats();
+            if (sep && last)
+                std::cerr << std::format("\33[{}F", last);
+            last = sorter.print_stats();
             for (auto &dev : devs)
-                dev->print_stats();
-            std::cerr << std::format(
-                    "\33[37mheight = {}\33[K\33[0m\n\33[J\33[{}F",
-                    height, devs.size() + lines + 1);
+                dev->print_stats(), last++;
+            std::cerr << std::format("\33[37mheight = {}\33[K\33[0m\n\33[J", height);
+            last++;
         }
     } };
 
@@ -131,6 +137,8 @@ void CudaSearcher::search_GPU() {
     // ensure all compute are finished & results are removed from GPU
     for (auto &dev : devs) dev->wait();
     sorter.join();
+    // stop printing stats before ~Device()
+    done = true, cv.notify_one(), monitor.join();
     devs.clear();
     height--;
 }
