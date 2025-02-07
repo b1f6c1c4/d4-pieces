@@ -254,7 +254,7 @@ unsigned Sorter::print_stats() const {
 #endif
     }
 
-#define WIDTH 66
+#define WIDTH 68
     auto lines = 0u;
     auto w = 0;
     std::stringstream ss;

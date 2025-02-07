@@ -29,7 +29,6 @@ class Device {
         R *p;
     };
     struct Output : Rg<RX> {
-        cudaEvent_t ev;
     };
 
     int dev;
@@ -90,10 +89,13 @@ class Device {
 
     // internals, only m can access
     unsigned long long m_scheduled{};
-    mutable std::timed_mutex mtx_m_works; // must not hold mtx
-    std::deque<Output> m_works{};
     cudaStream_t m_stream;
+    mutable std::timed_mutex mtx_m_works; // must not hold mtx
+    std::deque<Output *> m_works{};
     void m_entry();
+    void m_initiate_transfer(uint64_t sz);
+    void m_callback(Output *pwork);
+    friend void Device_callback_helper(void *raw);
 
 public:
     Device(int d, unsigned h, Sorter &s);
