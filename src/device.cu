@@ -65,6 +65,7 @@ Device::Work::Work(WL work, int dev, unsigned height) : WL{ work }, p{} {
 
 Device::Device(int d, unsigned h, Sorter &s)
     : dev{ d }, height{ h }, sorter{ s } {
+    C(cudaSetDevice(d));
 
     C(cudaMallocManaged(&counters, 2 * sizeof(unsigned long long)));
     cuda::atomic_ref n_reader_chunk{ counters[0] };
@@ -72,7 +73,6 @@ Device::Device(int d, unsigned h, Sorter &s)
     n_reader_chunk.store(0, cuda::memory_order_release);
     n_writer_chunk.store(0, cuda::memory_order_release);
 
-    C(cudaSetDevice(d));
     C(cudaSetDeviceFlags(cudaDeviceScheduleYield));
 
     size_t sz_free, sz_total;
@@ -303,7 +303,7 @@ again:
     }
 
     lock.lock();
-    if (!m_events.empty() || !xc_closed)
+    if (!m_events.empty() || !xc_closed || xc_pending)
         goto again;
 
     xm_completed = true;

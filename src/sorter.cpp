@@ -91,6 +91,7 @@ std::deque<WL> Sorter::join() {
         auto sz = sets[pos].size();
 #endif
         if (!sz) {
+            answer[pos].pos = pos;
             continue;
         }
         WL r{ new R[sz], sz, RgType::DELETE, pos };
