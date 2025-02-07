@@ -195,7 +195,7 @@ again:
         n_outs = nullptr;
     }
     lock.lock();
-    std::cout << std::format("dev#{}: finalizing with xc_used={}\n", dev, used);
+    std::cout << std::format("dev#{}: c thread quitting xc_used={}\n", dev, used);
     xc_used = used;
     cv.notify_all();
 }
@@ -233,10 +233,15 @@ void Device::m_entry() {
     std::unique_lock lock{ mtx };
     cv.wait(lock, [this]{ return xc_ready; });
 
+    auto tailed = false;
+
 again:
     cv.wait_for(lock, 50ms, [this]{ return xc_used.has_value(); });
     auto used = std::move(xc_used);
-    xc_used.reset();
+    if (xc_used) {
+        tailed = true;
+        xc_used.reset();
+    }
     lock.unlock();
 
     unsigned long long nwc;
@@ -303,12 +308,13 @@ again:
     }
 
     lock.lock();
-    if (!m_events.empty() || !xc_closed || xc_pending)
+    if (!m_events.empty() || !tailed)
         goto again;
 
     xm_completed = true;
     cv.notify_all();
     lock.unlock();
+    std::cout << std::format("dev#{}: m thread quitting\n", dev);
     C(cudaStreamSynchronize(m_stream));
     C(cudaStreamDestroy(m_stream));
     m_stream = cudaStream_t{};
