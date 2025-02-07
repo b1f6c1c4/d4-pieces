@@ -61,6 +61,7 @@ void show_gpu_devices() {
     printf("  Unified fp: %s\n",prop.unifiedFunctionPointers ? "yes" : "no");
     printf("  Concurrent managed access: %s\n",prop.concurrentManagedAccess ? "yes" : "no");
     printf("  PMA: %s\n",prop.pageableMemoryAccess ? "yes" : "no");
+    printf("  PMA w/ host PT: %s\n",prop.pageableMemoryAccessUsesHostPageTables ? "yes" : "no");
     printf("  ECC: %s\n",prop.ECCEnabled ? "yes" : "no");
     printf("  Cooperative launch: %s\n",prop.cooperativeLaunch ? "yes" : "no");
     printf("  DMMA from host: %s\n",prop.directManagedMemAccessFromHost ? "yes" : "no");
@@ -72,6 +73,8 @@ void show_gpu_devices() {
     int v;
     cudaDeviceGetAttribute(&v, cudaDevAttrMemSyncDomainCount, i);
     printf("  Sync domain: %d\n",v);
+    cudaDeviceGetAttribute(&v, cudaDevAttrHostRegisterSupported, i);
+    printf("  Host register: %d\n",v);
     cudaDeviceGetAttribute(&v, cudaDevAttrSingleToDoublePrecisionPerfRatio, i);
     printf("  float/double ratio: %d\n", v);
     cudaDeviceGetAttribute(&v, (cudaDeviceAttr)102, i);

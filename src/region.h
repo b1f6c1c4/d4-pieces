@@ -7,6 +7,8 @@ enum class RgType {
     NONE,
     DELETE,
     CUDA_FREE,
+    CUDA_FREE_HOST,
+    CUDA_HOST_UNREGISTER_DELETE,
 };
 
 template <typename T>
@@ -16,9 +18,14 @@ struct Rg {
 
     RgType ty{ RgType::DELETE };
 
+    [[nodiscard]] bool device_accessible() const { return ty != RgType::DELETE; }
     [[nodiscard]] operator bool() const { return ptr; }
 
     void dispose(); // len is not changed
+
+    static Rg<T> make_cpu(size_t len, bool page = false);
+    static Rg<T> make_managed(size_t len);
+    static Rg<T> make_cuda_mlocked(size_t len, bool direct = false);
 };
 
 struct WL : Rg<R> {
@@ -29,3 +36,9 @@ static_assert(std::is_trivially_copyable_v<WL>);
 
 extern template void Rg<R>::dispose();
 extern template void Rg<RX>::dispose();
+extern template Rg<R> Rg<R>::make_cpu(size_t len, bool page);
+extern template Rg<RX> Rg<RX>::make_cpu(size_t len, bool page);
+extern template Rg<R> Rg<R>::make_managed(size_t len);
+extern template Rg<RX> Rg<RX>::make_managed(size_t len);
+extern template Rg<R> Rg<R>::make_cuda_mlocked(size_t len, bool direct);
+extern template Rg<RX> Rg<RX>::make_cuda_mlocked(size_t len, bool direct);

@@ -50,7 +50,7 @@ static std::pair<uint64_t, uint32_t> balance(uint64_t n) {
     return { (n + 511) / 512, 512 };
 }
 
-Device::Work::Work(WL work, int dev, unsigned height) : WL{ work }, p{} {
+Device::Input::Input(WL work, int dev, unsigned height) : WL{ work }, p{} {
     auto l = pos >> 0 & 0b1111u;
     auto r = pos >> 4 & 0b1111u;
     auto szid = min(height - 1, 5);
@@ -106,10 +106,10 @@ void Device::c_entry() {
 again:
     cv.wait_for(lock, 50ms, [this]{ return xc_closed || !xc_queue.empty(); });
 
-    // synchronously free up host inputs copies
+    // synchronously free up original copies (work.ptr)
     lock.unlock();
     for (auto &work : c_works) {
-        if (!work)
+        if (!work || work.device_accessible())
             continue;
         auto err = cudaEventQuery(work.ev_m);
         if (err == cudaErrorNotReady)
@@ -122,9 +122,9 @@ again:
         work.dispose();
     }
 
-    // synchronously free up device inputs copies
+    // synchronously free up device copies (work.p)
     while (!c_works.empty()) {
-        auto work = c_works.front();
+        auto work = c_works.front(); // copy; pop_front() anyway
         auto err = cudaEventQuery(work.ev_c);
         if (err == cudaErrorNotReady)
             break;
@@ -136,8 +136,12 @@ again:
         std::cout << std::format("dev#{}: {}/{} = {:.2f}% done, free up {}B device mem ({} entries)\n",
                 dev, display(fin), display(wl), 100.0 * fin / wl,
                 display(work.len * sizeof(R)), work.len);
-        C(cudaFree(work.p));
-        work.p = nullptr;
+        if (work.device_accessible())
+            work.dispose();
+        else {
+            C(cudaFree(work.p));
+            work.p = nullptr;
+        }
         lock.lock();
         xc_pending--;
         c_works.pop_front();
@@ -149,7 +153,7 @@ again:
     // dispatch more
     lock.lock();
     while (!xc_queue.empty()) {
-        auto work = xc_queue.front();
+        auto work = std::move(xc_queue.front());
         xc_queue.pop_front();
         lock.unlock();
         { // dispatch logic
@@ -157,18 +161,21 @@ again:
                     "dev#{}: 0b{:08b}<<<{:8}, {:3}>>> = {:<6}*L{:<5}*R{:<5} => {:>9}B\n",
                     dev, work.pos, work.b, work.t,
                     work.len, work.fanoutL, work.fanoutR, display(work.sz * sizeof(R)));
-            C(cudaMallocAsync(&work.p, work.len * sizeof(R), c_stream));
-            C(cudaMemcpyAsync(work.p, work.ptr, work.len * sizeof(R),
-                        cudaMemcpyHostToDevice, c_stream));
-            C(cudaEventCreateWithFlags(&work.ev_m, cudaEventDisableTiming));
-            C(cudaEventRecord(work.ev_m, c_stream));
+            if (!work.device_accessible()) {
+                C(cudaMallocAsync(&work.p, work.len * sizeof(R), c_stream));
+                C(cudaMemcpyAsync(work.p, work.ptr, work.len * sizeof(R),
+                            cudaMemcpyHostToDevice, c_stream));
+                C(cudaEventCreateWithFlags(&work.ev_m, cudaEventDisableTiming));
+                C(cudaEventRecord(work.ev_m, c_stream));
+            }
             launch(work.b, work.t, c_stream, height,
                     // output ring buffer
                     ring_buffer, n_outs,
                     n_chunks,
                     &counters[0], &counters[1],
                     // input vector
-                    work.p, work.len,
+                    work.device_accessible() ? work.ptr : work.p,
+                    work.len,
                     // constants
                     work.pos,
                     work.d_f0L, work.fanoutL,
@@ -200,6 +207,8 @@ again:
     cv.notify_all();
 }
 
+#define MAX_DtoH 2
+
 void Device::m_entry() {
     pthread_setname_np(pthread_self(), std::format("dev#{}.m", dev).c_str());
     C(cudaSetDevice(dev));
@@ -208,27 +217,6 @@ void Device::m_entry() {
     cuda::atomic_ref n_writer_chunk{ counters[1] };
 
     C(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
-
-    /*
-    auto verify_mem = [=,this] {
-        while (true) {
-            auto mem = 4096 * get_avphys_pages();
-            if (mem / (2 * CYC_CHUNK * sizeof(RX)) >= m_data.size())
-                break;
-            std::cout << std::format("mem: only {}B memory availabe, wait\n",
-                    display(mem));
-            if (last) {
-                ::usleep(1000000);
-            } else {
-                ::usleep(500000);
-                return false;
-            }
-        }
-        return true;
-    };
-    */
-
-    // if (!verify_mem()) return;
 
     std::unique_lock lock{ mtx };
     cv.wait(lock, [this]{ return xc_ready; });
@@ -244,27 +232,51 @@ again:
     }
     lock.unlock();
 
-    unsigned long long nwc;
-    { // recycle logic
-        nwc = n_writer_chunk.load(cuda::memory_order_acquire);
-        while (m_scheduled < nwc) {
-            std::cout << std::format("dev#{}: start DtoH chunk #{:0{}}/{} ({}B)\n",
-                    dev, m_scheduled, count_digits(n_chunks),
-                    n_chunks, display(CYC_CHUNK * sizeof(RX)));
-            Rg<RX> r{
-                reinterpret_cast<RX *>(std::aligned_alloc(4096, CYC_CHUNK * sizeof(RX))),
-                CYC_CHUNK };
-            C(cudaMemcpyAsync(r.ptr,
-                        ring_buffer + (m_scheduled % n_chunks) * CYC_CHUNK,
-                        CYC_CHUNK * sizeof(RX), cudaMemcpyDeviceToHost, m_stream));
-            cudaEvent_t ev;
-            C(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
-            C(cudaEventRecord(ev, m_stream));
-            m_data.push_back(r);
-            m_events.push_back(ev);
-            m_scheduled++;
-            // if (!verify_mem()) return;
-        }
+    std::unique_lock lock_m_works{ mtx_m_works };
+
+again2:
+    // sorter logic
+    for (auto &work : m_works) {
+        if (!work) // already pushed to sorter
+            continue;
+        auto err = cudaEventQuery(work.ev);
+        if (err == cudaErrorNotReady)
+            continue;
+        C(err);
+        C(cudaEventDestroy(work.ev));
+        std::cout << std::format("dev#{}: pushing a chunk ({} entries, {}B) to sorter\n",
+                dev, CYC_CHUNK, display(CYC_CHUNK * sizeof(RX)));
+        sorter.push(work);
+        work.ptr = nullptr;
+    }
+    auto local = 0ull;
+    while (!m_works.empty()) {
+        if (m_works.front())
+            break;
+        m_works.pop_front();
+        local++;
+    }
+    if (local) {
+        n_reader_chunk.fetch_add(local, cuda::memory_order_release);
+    }
+
+    // recycle logic
+    auto nwc = n_writer_chunk.load(cuda::memory_order_acquire);
+    while (m_scheduled < nwc && m_works.size() < MAX_DtoH) {
+        std::cout << std::format("dev#{}: start DtoH chunk #{:0{}}/{} ({}B)\n",
+                dev, m_scheduled, count_digits(n_chunks),
+                n_chunks, display(CYC_CHUNK * sizeof(RX)));
+        auto &work = m_works.emplace_back(Rg<RX>::make_cpu(CYC_CHUNK));
+        C(cudaMemcpyAsync(work.ptr,
+                    ring_buffer + (m_scheduled % n_chunks) * CYC_CHUNK,
+                    CYC_CHUNK * sizeof(RX), cudaMemcpyDeviceToHost, m_stream));
+        C(cudaEventCreateWithFlags(&work.ev, cudaEventDisableTiming));
+        C(cudaEventRecord(work.ev, m_stream));
+        m_scheduled++;
+    }
+    if (m_works.size() >= MAX_DtoH) {
+        std::this_thread::sleep_for(5ms);
+        goto again2;
     }
 
     if (used) { // tail recycle logic
@@ -279,36 +291,18 @@ again:
             std::cout << std::format("dev#{}: start tail DtoH chunk #{:0{}}/{} for {} entries ({}B)\n",
                     dev, nwc, count_digits(n_chunks),
                     n_chunks, sz, display(sz * sizeof(RX)));
-            Rg<RX> r{ new RX[sz], sz };
-            C(cudaMemcpyAsync(r.ptr, ring_buffer + (nwc % n_chunks) * CYC_CHUNK,
+            auto &work = m_works.emplace_back(Rg<RX>::make_cpu(sz));
+            C(cudaMemcpyAsync(work.ptr, ring_buffer + (nwc % n_chunks) * CYC_CHUNK,
                         sz * sizeof(RX), cudaMemcpyDeviceToHost, m_stream));
-            cudaEvent_t ev;
-            C(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
-            C(cudaEventRecord(ev, m_stream));
-            m_data.push_back(r);
-            m_events.push_back(ev);
+            C(cudaEventCreateWithFlags(&work.ev, cudaEventDisableTiming));
+            C(cudaEventRecord(work.ev, m_stream));
         }
     }
 
-    // sorter logic
-    while (!m_events.empty()) {
-        auto ev = m_events.front();
-        auto err = cudaEventQuery(ev);
-        if (err == cudaErrorNotReady)
-            break;
-        C(err);
-        C(cudaEventDestroy(ev));
-        auto nrc = n_reader_chunk.fetch_add(1, cuda::memory_order_release);
-        std::cout << std::format("dev#{}: pushing chunk #{:0{}} ({} entries, {}B) to sorter\n",
-                dev, nrc, count_digits(n_chunks),
-                CYC_CHUNK, display(CYC_CHUNK * sizeof(RX)));
-        sorter.push(m_data.front());
-        m_events.pop_front();
-        m_data.pop_front();
-    }
+    lock_m_works.unlock();
 
     lock.lock();
-    if (!m_events.empty() || !tailed)
+    if (!m_works.empty() || !tailed)
         goto again;
 
     xm_completed = true;
@@ -362,24 +356,38 @@ void Device::print_stats() const {
     } else if (xm_completed) {
         ss << "completed]";
     } else {
-        auto nrc = n_reader_chunk.load(cuda::memory_order_relaxed);
+        lock.unlock();
         auto nwc = n_writer_chunk.load(cuda::memory_order_relaxed);
+
+        std::unique_lock lock_m_works{ mtx_m_works, std::defer_lock_t{} };
+        (void)lock_m_works.try_lock_for(5ms);
+        auto nrc = n_reader_chunk.load(cuda::memory_order_relaxed);
         for (auto i = 0ull; i < n_chunks; i++) {
             auto c = i < nrc ? i + n_chunks : i;
             if (c < nrc)
                 ss << " ";
-            else if (c < m_scheduled)
-                ss << "\33[35mR";
-            else if (c < nwc)
+            else if (c < m_scheduled) {
+                if (!lock_m_works || c - nrc >= m_works.size())
+                    ss << "\33[31m?";
+                else if (m_works[c - nrc].ptr)
+                    ss << "\33[35mR";
+                else
+                    ss << "\33[95mR";
+            } else if (c < nwc)
                 ss << "\33[90m-";
             else if (c == nwc)
                 ss << "\33[36mW";
             else
                 ss << " ";
         }
+        if (lock_m_works)
+            lock_m_works.unlock();
+
         auto wl = c_workload.load(std::memory_order_relaxed);
         auto fin = c_finished.load(std::memory_order_relaxed);
+
         ss << "\33[37m]";
+        lock.lock();
         if (xc_pending)
             ss << std::format(" {:.02f}%/{:d}", 100.0 * fin / wl, xc_pending);
         if (!xc_queue.empty())

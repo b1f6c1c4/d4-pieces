@@ -94,7 +94,11 @@ std::deque<WL> Sorter::join() {
             answer[pos].pos = pos;
             continue;
         }
-        WL r{ new R[sz], sz, RgType::DELETE, pos };
+#ifndef SORTER_MLOCKED
+        WL r{ Rg<R>::make_managed(sz), pos };
+#else
+        WL r{ Rg<R>::make_cuda_mlocked(sz), pos };
+#endif
 #ifndef SORTER_NPARF
         boost::async(*pool, [=,this] {
 #endif
@@ -210,6 +214,7 @@ void Sorter::push(Rg<RX> r) {
 unsigned Sorter::print_stats() const {
     auto mem_total = 0ull;
     auto mem_free = 0ull;
+    auto mem_locked = 0ull;
     for (std::ifstream fin("/proc/meminfo"); fin; ) {
         unsigned long long x;
         std::string s;
@@ -218,6 +223,8 @@ unsigned Sorter::print_stats() const {
             break;
         if (s == "MemTotal:")
             fin >> mem_total, mem_total *= 1024, fin >> s;
+        else if (s == "Mlocked:")
+            fin >> mem_locked, mem_locked *= 1024, fin >> s;
         else if (s == "MemFree:")
             fin >> mem_free, mem_free *= 1024, fin >> s;
         else
@@ -260,8 +267,11 @@ unsigned Sorter::print_stats() const {
         ss << "\33[" << color << 'm' << c;
     };
     ss << "\33[37msys  [";
-    for (auto i = 0ull; i < (mem_total - mem_free + C / 2) / C; i++)
-        push(31, '|');
+    for (auto i = 0ull; i < (mem_locked + C - 1) / C; i++)
+        push(32, '$');
+    if (mem_free + mem_locked < mem_total)
+        for (auto i = 0ull; i < (mem_total - mem_free - mem_locked + C / 2) / C; i++)
+            push(31, '|');
     for (auto i = 0ull; i < (mem_free + C / 2) / C; i++)
         push(30, ' ');
     ss << "\33[37m]\33[K\33[0m\n";

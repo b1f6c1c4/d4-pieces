@@ -13,20 +13,23 @@
 #include "sorter.hpp"
 
 class Device {
-    struct Work : WL {
+    struct Input : WL { // : Rg<X>
         cudaEvent_t ev_m, ev_c;
         uint64_t sz;
         uint32_t b, t;
         const frow_t *d_f0L, *d_f0R;
         uint32_t fanoutL, fanoutR;
         uint64_t load;
-        Work(WL work, int dev, unsigned height);
-        Work(const Work &other) = default;
-        Work(Work &&other) = default;
+        Input(WL work, int dev, unsigned height);
+        Input(const Input &other) = default;
+        Input(Input &&other) = default;
 
         // c:cudaMallocAsync c:cudaFree
         // __device__
         R *p;
+    };
+    struct Output : Rg<RX> {
+        cudaEvent_t ev;
     };
 
     int dev;
@@ -58,7 +61,7 @@ class Device {
     bool xc_ready{}, xc_closed{}, xm_completed{};
     uint64_t xc_pending{}; // # kernels
     std::optional<uint64_t> xc_used{}; // final output count
-    std::deque<Work> xc_queue{}; // before dispatching
+    std::deque<Input> xc_queue{}; // before dispatching
     // }
 
     std::atomic<uint64_t> c_workload{}; // # threads
@@ -82,13 +85,13 @@ class Device {
 
     // internals, only c can access
     cudaStream_t c_stream;
-    std::deque<Work> c_works{}; // after dispatching
+    std::deque<Input> c_works{}; // after dispatching
     void c_entry();
 
     // internals, only m can access
     unsigned long long m_scheduled{};
-    std::deque<Rg<RX>> m_data{};
-    std::deque<cudaEvent_t> m_events{};
+    mutable std::timed_mutex mtx_m_works; // must not hold mtx
+    std::deque<Output> m_works{};
     cudaStream_t m_stream;
     void m_entry();
 

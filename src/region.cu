@@ -17,8 +17,59 @@ void Rg<T>::dispose() {
             C(cudaFree(ptr));
             ptr = nullptr;
             break;
+        case RgType::CUDA_FREE_HOST:
+            C(cudaFreeHost(ptr));
+            ptr = nullptr;
+            break;
+        case RgType::CUDA_HOST_UNREGISTER_DELETE:
+            C(cudaHostUnregister(ptr));
+            delete [] ptr;
+            ptr = nullptr;
+            break;
+    }
+}
+
+template <typename T>
+Rg<T> Rg<T>::make_cpu(size_t len, bool page) {
+    if (page)
+        return Rg<T>{
+            reinterpret_cast<T *>(std::aligned_alloc(4096, len * sizeof(RX))),
+            CYC_CHUNK,
+            RgType::DELETE,
+        };
+    return Rg<T>{
+        new T[len],
+        len,
+        RgType::DELETE,
+    };
+}
+
+template <typename T>
+Rg<T> Rg<T>::make_managed(size_t len) {
+    Rg<T> r{ nullptr, len, RgType::CUDA_FREE };
+    C(cudaMallocManaged(&r.ptr, len * sizeof(T)));
+    return r;
+}
+
+template <typename T>
+Rg<T> Rg<T>::make_cuda_mlocked(size_t len, bool direct) {
+    if (direct) {
+        Rg<T> r{ nullptr, len, RgType::CUDA_FREE_HOST };
+        C(cudaHostAlloc(&r.ptr, len * sizeof(T), cudaHostAllocWriteCombined));
+        return r;
+    } else {
+        Rg<T> r{ new T[len], len, RgType::CUDA_HOST_UNREGISTER_DELETE };
+        C(cudaHostRegister(r.ptr, len * sizeof(T), cudaHostRegisterReadOnly));
+        return r;
     }
 }
 
 template void Rg<R>::dispose();
 template void Rg<RX>::dispose();
+
+template Rg<R> Rg<R>::make_cpu(size_t len, bool page);
+template Rg<RX> Rg<RX>::make_cpu(size_t len, bool page);
+template Rg<R> Rg<R>::make_managed(size_t len);
+template Rg<RX> Rg<RX>::make_managed(size_t len);
+template Rg<R> Rg<R>::make_cuda_mlocked(size_t len, bool direct);
+template Rg<RX> Rg<RX>::make_cuda_mlocked(size_t len, bool direct);
