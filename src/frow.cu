@@ -14,6 +14,7 @@ void transfer_frow_to_gpu() {
 
     for (auto d = 0; d < n_devices; d++) {
         C(cudaSetDevice(d));
+        C(cudaSetDeviceFlags(cudaDeviceScheduleYield));
         for (auto i = 0; i < 16; i++) {
             C(cudaMalloc(&d_frowDataL[d][i], h_frowInfoL[i].sz[5] * sizeof(frow_t)));
             C(cudaMalloc(&d_frowDataR[d][i], h_frowInfoR[i].sz[5] * sizeof(frow_t)));
@@ -26,6 +27,10 @@ void transfer_frow_to_gpu() {
         size_t drplc;
         C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
         std::cout << std::format("dev{}.DRPLC = {}\n", d, drplc);
+    }
+    for (auto d = 0; d < n_devices; d++) {
+        C(cudaSetDevice(d));
+        C(cudaDeviceSynchronize());
     }
 }
 

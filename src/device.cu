@@ -73,8 +73,6 @@ Device::Device(int d, unsigned h, Sorter &s)
     n_reader_chunk.store(0, cuda::memory_order_release);
     n_writer_chunk.store(0, cuda::memory_order_release);
 
-    C(cudaSetDeviceFlags(cudaDeviceScheduleYield));
-
     size_t sz_free, sz_total;
     C(cudaMemGetInfo(&sz_free, &sz_total));
     n_chunks = (7 * sz_free / 10 / sizeof(RX) + CYC_CHUNK - 1) / CYC_CHUNK;
@@ -167,6 +165,9 @@ again:
                             cudaMemcpyHostToDevice, c_stream));
                 C(cudaEventCreateWithFlags(&work.ev_m, cudaEventDisableTiming));
                 C(cudaEventRecord(work.ev_m, c_stream));
+            } else {
+                C(cudaMemAdvise(work.ptr, work.len * sizeof(R), cudaMemAdviseSetReadMostly, dev));
+                C(cudaMemPrefetchAsync(work.ptr, work.len * sizeof(R), dev, c_stream));
             }
             launch(work.b, work.t, c_stream, height,
                     // output ring buffer
