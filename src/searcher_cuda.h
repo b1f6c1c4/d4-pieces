@@ -30,7 +30,6 @@ struct CudaSearcher {
     void search_GPU();
 
     Rg<R> write_solution(unsigned pos, size_t sz);
-    Rg<R> *write_solutions(size_t sz);
 
 private:
     Rg<R> solutions[256];

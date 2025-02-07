@@ -128,7 +128,7 @@ void CudaSearcher::search_GPU() {
         std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
             return dev->workload;
         });
-        devs.front()->dispatch(ipos, height, solutions[ipos]);
+        devs.front()->dispatch(ipos, height, solutions[ipos]); // Device is responsible for free up
         maint(std::format("dispatching {}/256", ipos));
     }
     while (!maint("wait for computation").first);
@@ -149,23 +149,9 @@ uint64_t CudaSearcher::next_size(unsigned pos) const {
 
 Rg<R> CudaSearcher::write_solution(unsigned pos, size_t sz) {
     auto &r = solutions[pos];
-    if (r.ptr) {
-        C(cudaFree(r.ptr));
-        r.ptr = nullptr, r.len = 0;
-    }
+    r.ptr = nullptr;
     if (sz)
-        C(cudaMallocManaged(&r.ptr, sz * sizeof(R), cudaMemAttachHost));
+        r.ptr = new R[sz * sizeof(R)];
     r.len = sz;
     return r;
-}
-
-Rg<R> *CudaSearcher::write_solutions(size_t sz) {
-    for (auto pos = 0; pos <= 255; pos++) {
-        auto &[ptr, len] = solutions[pos];
-        if (ptr) C(cudaFree(ptr));
-        ptr = nullptr;
-        len = 0;
-        C(cudaMallocManaged(&ptr, sz * sizeof(R), cudaMemAttachHost));
-    }
-    return solutions;
 }

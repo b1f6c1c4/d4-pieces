@@ -15,7 +15,14 @@ struct Device {
 
     unsigned long long *n_outs; // __device__, owned
 
-    uint64_t workload;
+    uint64_t workload, finished_load;
+
+    struct W {
+        cudaEvent_t ev;
+        uint64_t load;
+        R *p;
+    };
+    std::deque<W> c_works;
 
     unsigned long long m_scheduled;
     std::deque<Rg<RX>> m_data;

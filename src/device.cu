@@ -48,7 +48,8 @@ static std::pair<uint64_t, uint32_t> balance(uint64_t n) {
 
 Device::Device(int d)
     : dev{ d }, c_stream{}, m_stream{}, ring_buffer{},
-      n_chunks{}, counters{}, n_outs{}, workload{},
+      n_chunks{}, counters{}, n_outs{},
+      workload{}, finished_load{}, c_works{},
       m_scheduled{}, m_data{}, m_events{} {
 
     C(cudaMallocManaged(&counters, 2 * sizeof(unsigned long long)));
@@ -58,10 +59,11 @@ Device::Device(int d)
     n_writer_chunk.store(0, cuda::memory_order_release);
 
     C(cudaSetDevice(d));
+    C(cudaSetDeviceFlags(cudaDeviceScheduleYield));
 
     size_t sz_free, sz_total;
     C(cudaMemGetInfo(&sz_free, &sz_total));
-    n_chunks = (9 * sz_free / 10 / sizeof(RX) + CYC_CHUNK - 1) / CYC_CHUNK;
+    n_chunks = (7 * sz_free / 10 / sizeof(RX) + CYC_CHUNK - 1) / CYC_CHUNK;
 
     C(cudaStreamCreateWithFlags(&c_stream, cudaStreamNonBlocking));
     C(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
@@ -78,6 +80,8 @@ Device::Device(int d)
 
 Device::~Device() {
     C(cudaSetDevice(dev));
+    for (auto w : c_works)
+        C(cudaEventDestroy(w.ev));
     for (auto ev : m_events)
         C(cudaEventDestroy(ev));
     C(cudaStreamSynchronize(c_stream));
@@ -117,20 +121,25 @@ void Device::dispatch(unsigned pos, unsigned height, Rg<R> cfgs) {
             dev, pos, b, t,
             len, fanoutL, fanoutR, display(sz * sizeof(R)));
     C(cudaSetDevice(dev));
-    C(cudaMemAdvise(ptr, len * sizeof(R), cudaMemAdviseSetReadMostly, dev));
-    C(cudaStreamAttachMemAsync(c_stream, ptr, len * sizeof(R)));
-    C(cudaMemPrefetchAsync(ptr, len * sizeof(R), dev, c_stream));
+    W work{};
+    work.load = b * t;
+    C(cudaMallocAsync(&work.p, len * sizeof(R), c_stream));
+    C(cudaMemcpyAsync(work.p, ptr, len * sizeof(R),
+                cudaMemcpyHostToDevice, c_stream));
     launch(b, t, c_stream, height,
             // output ring buffer
             ring_buffer, n_outs,
             n_chunks,
             &counters[0], &counters[1],
             // input vector
-            ptr, len,
+            work.p, len,
             // constants
             pos,
             d_f0L, fanoutL,
             d_f0R, fanoutR);
+    C(cudaEventCreateWithFlags(&work.ev, cudaEventDisableTiming));
+    C(cudaEventRecord(work.ev, c_stream));
+    c_works.emplace_back(work);
     workload += b * t;
 }
 
@@ -140,6 +149,18 @@ void Device::recycle(bool last) {
     if (last) {
         std::cout << std::format("dev#{}: synchronize\n", dev);
         C(cudaStreamSynchronize(c_stream)); // necessary as kernels may be still finishing
+    }
+
+    while (!c_works.empty()) {
+        auto w = c_works.front();
+        auto err = cudaEventQuery(w.ev);
+        if (err == cudaErrorNotReady)
+            break;
+        C(err);
+        C(cudaEventDestroy(w.ev));
+        C(cudaFree(w.p));
+        finished_load += w.load;
+        c_works.pop_front();
     }
 
     auto verify_mem = [=,this] {
@@ -213,6 +234,7 @@ void Device::recycle(bool last) {
 }
 
 void Device::collect(Sorter &sorter) {
+    C(cudaSetDevice(dev));
     cuda::atomic_ref n_reader_chunk{ counters[0] };
     while (!m_events.empty()) {
         auto ev = m_events.front();
@@ -252,6 +274,7 @@ void Device::print_stats() const {
         else
             ss << " ";
     }
-    ss << "\33[37m]\33[K\33[0m\n";
+    ss << "\33[37m] " << display(finished_load) << "/";
+    ss << display(workload) << "\33[K\33[0m\n";
     std::cerr << ss.str();
 }
