@@ -12,17 +12,17 @@ struct CudaSearcher {
     ~CudaSearcher();
 
     [[nodiscard]] uint32_t get_height() const { return height; }
-    [[nodiscard]] uint64_t size(unsigned pos) const { return solutions[pos].len; }
+    [[nodiscard]] uint64_t size(unsigned i) const { return solutions[i].len; }
     [[nodiscard]] uint64_t size() const {
         auto cnt = 0ull;
-        for (auto i = 0u; i <= 255u; i++)
+        for (auto i = 0u; i < solutions.size(); i++)
             cnt += size(i);
         return cnt;
     }
-    [[nodiscard]] uint64_t next_size(unsigned pos) const;
+    [[nodiscard]] uint64_t next_size(unsigned i) const;
     [[nodiscard]] uint64_t next_size() const {
         auto cnt = 0ull;
-        for (auto i = 0u; i <= 255u; i++)
+        for (auto i = 0u; i < solutions.size(); i++)
             cnt += next_size(i);
         return cnt;
     }
@@ -32,7 +32,7 @@ struct CudaSearcher {
     Rg<R> write_solution(unsigned pos, size_t sz);
 
 private:
-    Rg<R> solutions[256];
+    std::deque<WL> solutions;
     Device *devs;
 
     uint32_t height; // maximum hight stored in solutions

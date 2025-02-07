@@ -77,10 +77,13 @@ spin:
 
 CudaSearcher::CudaSearcher(uint64_t empty_area)
     : solutions{}, height{ (std::bit_width(empty_area) + 8u - 1u) / 8u } {
-    auto &r = solutions[empty_area & 0xffu];
-    r.ptr = new R[1];
-    r.ptr[0] = R{ (uint32_t)(empty_area >> 8), (uint32_t)(empty_area >> 8 + 32) };
-    r.len = 1;
+    solutions.emplace_back(
+        Rg<R>{
+            new R[1]{ { (uint32_t)(empty_area >> 8), (uint32_t)(empty_area >> 8 + 32) } },
+            1zu,
+            RgType::DELETE,
+        },
+        empty_area & 0xffu);
 }
 
 CudaSearcher::~CudaSearcher() {
@@ -88,16 +91,12 @@ CudaSearcher::~CudaSearcher() {
 }
 
 void CudaSearcher::free() {
-    for (auto &r : solutions) {
-        if (r.ptr)
-            cudaFree(r.ptr);
-        r.ptr = nullptr;
-        r.len = 0;
-    }
+    for (auto &r : solutions)
+        r.dispose();
 }
 
 void CudaSearcher::search_GPU() {
-    Sorter sorter{ *this };
+    Sorter sorter{};
     std::vector<std::unique_ptr<Device>> devs;
     for (auto i = 0; i < n_devices; i++)
         devs.emplace_back(std::make_unique<Device>(i, height, sorter));
@@ -126,35 +125,28 @@ void CudaSearcher::search_GPU() {
         }
     } };
 
-    for (auto ipos = 0u; ipos <= 255u; ipos++) {
+    while (!solutions.empty()) {
         std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
             return dev->get_workload();
         });
         // Device::c is responsible for free up
-        devs.front()->dispatch(WL{ solutions[ipos], ipos });
+        devs.front()->dispatch(solutions.front());
+        solutions.pop_front();
     }
     for (auto &dev : devs) dev->close();
     // ensure all compute are finished & results are removed from GPU
     for (auto &dev : devs) dev->wait();
-    sorter.join();
+    solutions = sorter.join();
     // stop printing stats before ~Device()
     done = true, cv.notify_one(), monitor.join();
     devs.clear();
     height--;
 }
 
-uint64_t CudaSearcher::next_size(unsigned pos) const {
+uint64_t CudaSearcher::next_size(unsigned i) const {
     auto szid = min(height - 1, 5);
-    return solutions[pos].len
-        * h_frowInfoL[(pos >> 0) & 0b1111u].sz[szid]
-        * h_frowInfoR[(pos >> 4) & 0b1111u].sz[szid];
-}
-
-Rg<R> CudaSearcher::write_solution(unsigned pos, size_t sz) {
-    auto &r = solutions[pos];
-    r.ptr = nullptr;
-    if (sz)
-        r.ptr = new R[sz * sizeof(R)];
-    r.len = sz;
-    return r;
+    auto &w = solutions[i];
+    return w.len
+        * h_frowInfoL[(w.pos >> 0) & 0b1111u].sz[szid]
+        * h_frowInfoR[(w.pos >> 4) & 0b1111u].sz[szid];
 }

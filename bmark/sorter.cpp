@@ -39,7 +39,8 @@ int main(int argc, char *argv[]) {
             rnd.seed(seed);
             Rg<RX> r{
                 reinterpret_cast<RX *>(std::aligned_alloc(4096, chunk * sizeof(RX))),
-                chunk };
+                chunk,
+                RgType::NONE };
             for (auto i = 0; i < chunk; i++) {
                 if (!dist(rnd) && i) {
                     auto lucky = rnd() % i;

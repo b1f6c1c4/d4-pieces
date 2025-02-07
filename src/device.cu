@@ -64,8 +64,7 @@ Device::Work::Work(WL work, int dev, unsigned height) : WL{ work }, p{} {
 }
 
 Device::Device(int d, unsigned h, Sorter &s)
-    : dev{ d }, height{ h }, sorter{ s },
-      c_thread{ &Device::c_entry, this }, m_thread{ &Device::m_entry, this } {
+    : dev{ d }, height{ h }, sorter{ s } {
 
     C(cudaMallocManaged(&counters, 2 * sizeof(unsigned long long)));
     cuda::atomic_ref n_reader_chunk{ counters[0] };
@@ -79,6 +78,10 @@ Device::Device(int d, unsigned h, Sorter &s)
     size_t sz_free, sz_total;
     C(cudaMemGetInfo(&sz_free, &sz_total));
     n_chunks = (7 * sz_free / 10 / sizeof(RX) + CYC_CHUNK - 1) / CYC_CHUNK;
+
+    // launch thread AFTER setting up counters and n_chunks
+    c_thread = std::jthread{ &Device::c_entry, this };
+    m_thread = std::jthread{ &Device::m_entry, this };
 }
 
 void Device::c_entry() {
@@ -106,7 +109,7 @@ again:
     // synchronously free up host inputs copies
     lock.unlock();
     for (auto &work : c_works) {
-        if (!work.ptr)
+        if (!work)
             continue;
         auto err = cudaEventQuery(work.ev_m);
         if (err == cudaErrorNotReady)
@@ -116,8 +119,7 @@ again:
         work.ev_m = cudaEvent_t{};
         std::cout << std::format("dev#{}: free up {}B host input mem ({} entries)\n",
                 dev, display(work.len * sizeof(R)), work.len);
-        delete [] work.ptr;
-        work.ptr = nullptr;
+        work.dispose();
     }
 
     // synchronously free up device inputs copies
@@ -202,6 +204,9 @@ void Device::m_entry() {
     pthread_setname_np(pthread_self(), std::format("dev#{}.m", dev).c_str());
     C(cudaSetDevice(dev));
 
+    cuda::atomic_ref n_reader_chunk{ counters[0] };
+    cuda::atomic_ref n_writer_chunk{ counters[1] };
+
     C(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
 
     /*
@@ -227,10 +232,6 @@ void Device::m_entry() {
 
     std::unique_lock lock{ mtx };
     cv.wait(lock, [this]{ return xc_ready; });
-
-    // before xc_ready, counters are not yet setup
-    cuda::atomic_ref n_reader_chunk{ counters[0] };
-    cuda::atomic_ref n_writer_chunk{ counters[1] };
 
 again:
     cv.wait_for(lock, 50ms, [this]{ return xc_used.has_value(); });
@@ -330,7 +331,6 @@ void Device::dispatch(WL cfgs) {
 void Device::close() {
     std::unique_lock lock{ mtx };
     xc_closed = true;
-    std::cout << std::format("dev#{}: wait for compute\n", dev);
     cv.notify_all();
 }
 

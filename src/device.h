@@ -8,12 +8,9 @@
 #include <optional>
 #include <thread>
 #include "record.h"
+#include "region.h"
 #include "frow.h"
 #include "sorter.hpp"
-
-struct WL : Rg<R> {
-    unsigned pos;
-};
 
 class Device {
     struct Work : WL {

@@ -27,9 +27,3 @@ struct RCfg {
     uint32_t nm_cnt;
     uint32_t ex[4];
 };
-
-template <typename T>
-struct Rg {
-    T *ptr;
-    unsigned long long len; // number of T
-};

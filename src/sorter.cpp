@@ -18,15 +18,6 @@
 
 #include "util.hpp"
 
-#ifdef BMARK // for bmark/sorter.cpp
-struct CudaSearcher {
-    R *d;
-    Rg<R> write_solution(unsigned, size_t sz);
-};
-#else
-#include "searcher_cuda.h"
-#endif
-
 struct hasher {
     size_t operator()(const R &v) const {
         size_t h{};
@@ -60,8 +51,8 @@ struct alignas(64) CSR : boost::unordered_flat_set<R, hasher> {
 };
 #endif
 
-Sorter::Sorter(CudaSearcher &p)
-    : parent{ p }, dedup{}, total{}, pending{},
+Sorter::Sorter()
+    : dedup{}, total{}, pending{},
       pool{ new boost::basic_thread_pool{
           boost::thread::hardware_concurrency(),
           [](auto &&) { pthread_setname_np(pthread_self(), "sorter"); }
@@ -79,7 +70,7 @@ Sorter::~Sorter() {
     delete [] sets;
 }
 
-void Sorter::join() {
+std::deque<WL> Sorter::join() {
     pool->close();
     pool->join();
     std::print("sorter: finalizing\n");
@@ -90,6 +81,7 @@ void Sorter::join() {
         [](auto &&) { pthread_setname_np(pthread_self(), "sorter-f"); }
     };
 #endif
+    std::deque<WL> answer(256);
     for (auto pos = 0u; pos <= 255u; pos++) {
 #ifdef SORTER_N
         auto sz = 0ull;
@@ -99,10 +91,9 @@ void Sorter::join() {
         auto sz = sets[pos].size();
 #endif
         if (!sz) {
-            parent.write_solution(pos, 0zu);
             continue;
         }
-        auto r = parent.write_solution(pos, sz);
+        WL r{ new R[sz], sz, RgType::DELETE, pos };
 #ifndef SORTER_NPARF
         boost::async(*pool, [=,this] {
 #endif
@@ -139,11 +130,13 @@ void Sorter::join() {
 #ifndef SORTER_NPARF
         });
 #endif
+        answer[pos] = r;
     }
 #ifndef SORTER_NPARF
     pool->close();
     pool->join();
 #endif
+    return answer;
 }
 
 #define N_PAGES 48
@@ -165,10 +158,8 @@ void Sorter::push(Rg<RX> r) {
     if (n * amount < r.len || n && (n - 1) * amount >= r.len)
         throw std::runtime_error{ std::format("internal error: distributing {} to {} with {} each",
                 r.len, n, amount) };
-    auto deleter = [=,this]{
-#ifndef BMARK // for bmark/sorter.cpp
-        delete [] r.ptr;
-#endif
+    auto deleter = [=,this] mutable {
+        r.dispose();
         std::atomic_ref atm_d{ dedup };
         std::atomic_ref atm_n{ total };
         std::atomic_ref atm_p{ pending };
