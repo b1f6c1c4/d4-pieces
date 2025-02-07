@@ -95,48 +95,43 @@ void CudaSearcher::free() {
 }
 
 void CudaSearcher::search_GPU() {
-    auto last_stat = std::chrono::steady_clock::now();
     Sorter sorter{ *this };
     std::vector<std::unique_ptr<Device>> devs;
     for (auto i = 0; i < n_devices; i++)
-        devs.emplace_back(std::make_unique<Device>(i));
+        devs.emplace_back(std::make_unique<Device>(i, height, sorter));
 
-    auto maint = [&](auto &&status, bool last = false) {
+    std::mutex mtx;
+    auto done = false;
+    std::condition_variable cv;
+    std::jthread thr{ [&,this] {
         using namespace std::chrono_literals;
-        auto cc = true;
-        auto mc = true;
-        for (auto &dev : devs) {
-            cc &= dev->c_completed();
-            mc &= dev->m_completed();
-            dev->recycle(last);
-            dev->collect(sorter);
-        }
-        auto now = std::chrono::steady_clock::now();
-        if (now - last_stat >= 100ms) {
+        std::unique_lock lock{ mtx };
+        while (true) {
+            cv.wait_for(lock, 100ms, [&]{ return done; });
+            if (done)
+                break;
+
             auto lines = sorter.print_stats();
             for (auto &dev : devs)
                 dev->print_stats();
-            last_stat = now;
             std::cerr << std::format(
-                    "\33[37mheight = {} status = {}\33[K\33[0m\n\33[J\33[{}F",
-                    height, status, devs.size() + lines + 1);
+                    "\33[37mheight = {}\33[K\33[0m\n\33[J\33[{}F",
+                    height, devs.size() + lines + 1);
         }
-        return std::make_pair(cc, mc);
-    };
+    } };
 
     for (auto ipos = 0u; ipos <= 255u; ipos++) {
         std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
-            return dev->workload;
+            return dev->get_workload();
         });
-        devs.front()->dispatch(ipos, height, solutions[ipos]); // Device is responsible for free up
-        maint(std::format("dispatching {}/256", ipos));
+        // Device::c is responsible for free up
+        devs.front()->dispatch(WL{ solutions[ipos], ipos });
     }
-    while (!maint("wait for computation").first);
-    maint("gather tails", true);
-    while (!maint("wait for memory").second);
-    devs.clear();
-    maint("wait for sorter (this may take a while)");
+    for (auto &dev : devs) dev->close();
+    // ensure all compute are finished & results are removed from GPU
+    for (auto &dev : devs) dev->wait();
     sorter.join();
+    devs.clear();
     height--;
 }
 
