@@ -24,7 +24,8 @@ static inline void chk_impl(curandStatus_t code, const char *file, int line) {
 extern std::optional<Naming> g_nme;
 extern unsigned g_sym;
 
-#define N_CHUNKS 45
+// #define N_CHUNKS 45
+#define N_CHUNKS 9
 __managed__ R *cfgs;
 
 template <unsigned H>
@@ -71,9 +72,9 @@ void launch_fix_cfgs(unsigned H, unsigned long long n_cfgs, cudaStream_t s) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 9) {
+    if (argc != 10) {
         std::cout << std::format(
-                "Usage: {} <min_m> <max_m> <min_n> <max_n> <board_n> <ea> <height> <n_cfgs>\n",
+                "Usage: {} <min_m> <max_m> <min_n> <max_n> <board_n> <ea> <height> <n_cfgs> <n_pars>\n",
                 argv[0]);
         return 1;
     }
@@ -87,6 +88,7 @@ int main(int argc, char *argv[]) {
     auto ea = (uint8_t)std::strtol(argv[6], nullptr, 16);
     auto height = (unsigned)std::atoi(argv[7]);
     auto n_cfgs = (uint64_t)std::atoll(argv[8]);
+    auto n_pars = std::atoi(argv[9]);
     g_nme.emplace(
         (uint64_t)min_m, (uint64_t)max_m,
         (uint64_t)min_n, (uint64_t)max_n,
@@ -106,14 +108,14 @@ int main(int argc, char *argv[]) {
     cudaStream_t stream;
     C(cudaStreamCreate(&stream));
 
-    frow_t *f0L, *f0R;
+    frow32_t *f0L, *f0R;
     std::cout << std::format("copy f0L({}), f0R({}) at szid={}\n", fanoutL, fanoutR, szid);
-    C(cudaMallocAsync(&f0L, fanoutL*sizeof(frow_t), stream));
-    C(cudaMallocAsync(&f0R, fanoutR*sizeof(frow_t), stream));
-    C(cudaMemcpyAsync(f0L, h_frowInfoL[(ea >> 0) & 0xfu].data,
-                fanoutL*sizeof(frow_t), cudaMemcpyHostToDevice, stream));
-    C(cudaMemcpyAsync(f0R, h_frowInfoR[(ea >> 0) & 0xfu].data,
-                fanoutR*sizeof(frow_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMallocAsync(&f0L, fanoutL*sizeof(frow32_t), stream));
+    C(cudaMallocAsync(&f0R, fanoutR*sizeof(frow32_t), stream));
+    C(cudaMemcpyAsync(f0L, h_frowInfoL[(ea >> 0) & 0xfu].data32,
+                fanoutL*sizeof(frow32_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMemcpyAsync(f0R, h_frowInfoR[(ea >> 0) & 0xfu].data32,
+                fanoutR*sizeof(frow32_t), cudaMemcpyHostToDevice, stream));
 
     std::cout << std::format("allocate {} cfgs\n", n_cfgs);
     C(cudaMallocManaged(&cfgs, n_cfgs*sizeof(R)));
@@ -133,16 +135,48 @@ int main(int argc, char *argv[]) {
     unsigned long long *n_outs;
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), stream));
 
-    auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
-    // pars.erase(pars.begin() + 10, pars.end());
+    // auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
+    // if (pars.size() > n_pars)
+    //     pars.erase(pars.begin() + n_pars, pars.end());
+    // pars.clear();
+    // pars.emplace(KParams{  false
+    std::vector<KParams> pars;
+    pars.push_back(KParams{
+            KSizing{ n_cfgs, fanoutL, fanoutR },
+            false,
+            84*107,
+            384,
+            24576 / sizeof(frow32_t) / 4,
+            });
+    pars.push_back(KParams{
+            KSizing{ n_cfgs, fanoutL, fanoutR },
+            false,
+            84*107,
+            384,
+            24576 / sizeof(frow32_t)
+            });
+    pars.push_back(KParams{
+            KSizing{ n_cfgs, fanoutL, fanoutR },
+            true,
+            84*107,
+            384,
+            24576 / sizeof(frow32_t)
+            });
+    pars.push_back(KParams{
+            KSizing{ n_cfgs, fanoutL, fanoutR },
+            false,
+            (n_cfgs * fanoutL * fanoutR + 768 - 1) / 768,
+            768,
+            0,
+            });
     for (auto res : pars) {
         unsigned long long tmp{};
         C(cudaMemcpyAsync(n_outs, &tmp,
                     sizeof(unsigned long long), cudaMemcpyHostToDevice, stream));
         if (res.shmem_len) {
             std::cout << std::format("<<<{:9},{:5},{:5}B>>>[{}]/{:.02e} => ",
-                    res.blocks, res.threads, res.shmem_len * sizeof(frow_t),
-                    res.reverse ? "R" : "L",
+                    res.blocks, res.threads, res.shmem_len * sizeof(frow32_t),
+                    res.reverse ? "L" : "R",
                     res.fom());
         } else {
             std::cout << std::format("<<<{:9},{:5}>>>  [legacy]/{:.02e} => ",

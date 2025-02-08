@@ -44,8 +44,8 @@ struct KParamsFull : KParams {
 
     uint8_t ea;
 
-    const frow_t *f0L;
-    const frow_t *f0R;
+    const frow32_t *f0L;
+    const frow32_t *f0R;
 
     void launch(cudaStream_t stream);
 };
@@ -66,5 +66,5 @@ void prepare_kernels(); // must be called before KParamsFull::launch
         const R *cfgs, const uint64_t n_cfgs, \
         /* constants */ \
         uint8_t ea, \
-        const frow_t *f0L, const uint32_t f0Lsz, \
-        const frow_t *f0R, const uint32_t f0Rsz
+        const frow32_t *f0L, const uint32_t f0Lsz, \
+        const frow32_t *f0R, const uint32_t f0Rsz

@@ -11,7 +11,7 @@
  * 1024*1024*64 <= 1024 threads / block
  * 32 threads / warp
  * 16 blocks / SM
- * 48 threads / warp
+ * 48 warps / SM
  * 1536 threads / SM
  * 65536 regs / SM
  * 255 regs / threads

@@ -3,6 +3,8 @@
 #include "record.cuh"
 #include "sn.cuh"
 
+#include <cuda_pipeline.h>
+
 // without __forceinline__ nvcc will encounter silent ICE and produce weird
 // result, including CUDA_EXCEPTION_4 or CUDA_EXCEPTION_9.
 template <unsigned H>
@@ -54,10 +56,10 @@ template <unsigned H, bool Reverse>
 __global__
 __launch_bounds__(768, 2)
 void row_search(unsigned shmem_len, K_PARAMS) {
-    extern __shared__ frow_t shmem[/* shmem_len */];
+    extern __shared__ frow32_t shmem[/* shmem_len * 3 */];
 
     uint32_t f0Xsz, f0Ysz;
-    const frow_t *f0X, *f0Y;
+    const frow32_t *f0X, *f0Y;
     if constexpr (!Reverse) {
         f0Xsz = f0Rsz, f0Ysz = f0Lsz;
         f0X = f0R, f0Y = f0L;
@@ -76,26 +78,31 @@ void row_search(unsigned shmem_len, K_PARAMS) {
     for (auto f0Xoffset = 0u; f0Xoffset < f0Xsz; f0Xoffset += shmem_len) {
         // every block, do the same: fill shmem upto shmem_len
         auto n_shmem = min(shmem_len, f0Xsz - f0Xoffset);
-        for (auto i = threadIdx.x; i < n_shmem; i += blockDim.x) {
-            shmem[i] = f0X[f0Xoffset + i];
+        auto dst = reinterpret_cast<uint32_t *>(shmem);
+        auto src = reinterpret_cast<const uint32_t *>(f0X + f0Xoffset);
+        for (auto i = threadIdx.x; i < 3 * n_shmem; i += blockDim.x) {
+            __pipeline_memcpy_async(dst + i, src + i, 4, 0);
         }
+        __pipeline_commit();
+        __pipeline_wait_prior(0);
+        __syncthreads();
 
-        // each warp, inspect the (warpsId0 + i * wpn)-th warp
-        auto warpIdx = threadIdx.x % warpSize;
-        auto warpsId0 = threadIdx.x / warpSize + blockIdx.x * wpb;
+        // each warp, inspect the (warpIdx + k * wpg)-th warp
+        auto warpIdx = threadIdx.x / warpSize + blockIdx.x * wpb;
         for (auto k = 0ull; k < iterations; k++) {
-            auto w = warpsId0 + k * wpg;
+            auto w = warpIdx + k * wpg;
             if (w / wpn >= f0Ysz)
                 break;
-            auto fY = f0Y[w / wpn];
-            auto id = warpIdx + w % wpn;
-            if (id >= n_cfgs) [[unlikely]]
+            frow32_t fY32 = f0Y[w / wpn];
+            frow_t fY = fY32;
+            if (threadIdx.x % warpSize + w % wpn >= n_cfgs) [[unlikely]]
                 continue;
 
-            auto r = cfgs[id];
-            for (auto i = 0ull; i < shmem_len && i < n_shmem; i++) {
-                auto fX = shmem[i];
-                if (fX.shape & fY.shape) [[unlikely]] continue;
+            auto r = cfgs[threadIdx.x % warpSize + w % wpn];
+            for (auto i = 0ull; i < n_shmem; i++) {
+                frow_t fX = shmem[i];
+                if (fX.shape & fY.shape) [[unlikely]]
+                    continue;
                 impl<H>(r, Reverse ? fX : fY, Reverse ? fY : fX,
                     ring_buffer, n_outs, n_chunks,
                     n_reader_chunk, n_writer_chunk, ea);
@@ -110,8 +117,8 @@ void simple_row_search(unsigned, K_PARAMS) {
     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
     if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
     auto r = cfgs[idx / f0Rsz / f0Lsz];
-    auto fL = f0L[idx / f0Rsz % f0Lsz];
-    auto fR = f0R[idx % f0Rsz];
+    frow_t fL = f0L[idx / f0Rsz % f0Lsz];
+    frow_t fR = f0R[idx % f0Rsz];
     if (fL.shape & fR.shape) [[unlikely]] return;
     impl<H>(r, fL, fR, ring_buffer, n_outs, n_chunks,
             n_reader_chunk, n_writer_chunk, ea);

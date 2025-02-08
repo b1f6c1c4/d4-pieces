@@ -19,6 +19,7 @@ add_compile_options(-Wno-unused-parameter)
 add_compile_options(-Wno-unknown-pragmas)
 add_compile_options(-Wno-sign-compare)
 add_compile_options(-Wno-unused-command-line-argument)
+add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20040>)
 set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--no-undefined")
 set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 
