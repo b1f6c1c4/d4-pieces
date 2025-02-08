@@ -1,8 +1,13 @@
 #pragma once
 
+#include <cuda.h>
 #include <cstdint>
 #include "frow.h"
 #include "record.h"
+
+#ifdef BMARK
+#include <vector>
+#endif
 
 struct KParams;
 struct KSizing {
@@ -10,7 +15,11 @@ struct KSizing {
     uint32_t f0Lsz;
     uint32_t f0Rsz;
 
+#ifdef BMARK
+    [[nodiscard]] std::vector<KParams> optimize() const;
+#else
     [[nodiscard]] KParams optimize() const;
+#endif
 };
 
 struct KParams : KSizing {
@@ -22,7 +31,6 @@ struct KParams : KSizing {
     [[nodiscard]] double fom() const;
 };
 
-#ifdef __CUDA_ARCH__
 struct KParamsFull : KParams {
     unsigned height;
 
@@ -41,4 +49,3 @@ struct KParamsFull : KParams {
 
     void launch(cudaStream_t stream);
 };
-#endif

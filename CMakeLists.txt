@@ -49,7 +49,6 @@ else()
         src/frow.cu
         src/frow.cpp
         src/kernel.cu
-        src/kernel.cpp
         src/device.cu
         src/record.cu
         src/region.cu
@@ -71,6 +70,24 @@ else()
 
     add_executable(enum src/enum.cpp src/Shape.cpp src/Group.cpp)
     target_compile_options(enum PRIVATE -g -O3)
+
+    add_executable(kernel
+        bmark/kernel.cu
+        src/frow.cpp
+        src/frow.cu
+        src/kernel.cu
+        src/known1.cpp
+        src/known2.cpp
+        src/record.cu
+        src/naming.cpp
+        src/Shape.cpp)
+    target_compile_definitions(kernel PUBLIC BMARK)
+    target_compile_options(kernel PUBLIC -g -O3)
+    target_link_libraries(kernel PRIVATE cuda)
+    target_link_libraries(kernel PRIVATE curand)
+    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -lineinfo>)
+    set_target_properties(kernel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    set_target_properties(kernel PROPERTIES CUDA_ARCHITECTURES "86")
 
     add_library(sorter OBJECT bmark/sorter.cpp)
     target_compile_definitions(sorter INTERFACE BMARK)

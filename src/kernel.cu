@@ -1,5 +1,9 @@
 #include "kernel.h"
 
+#include <algorithm>
+#include <ranges>
+#include <vector>
+
 #include "util.cuh"
 #include "record.cuh"
 #include "sn.cuh"
@@ -10,11 +14,10 @@
         unsigned long long *n_outs, /* __device__ */ \
         unsigned long long n_chunks, \
         unsigned long long *n_reader_chunk, /* __managed__, HtoD */ \
-        unsigned long long *n_writer_chunk, /* __managed__, DtoH */ \
+        unsigned long long *n_writer_chunk /* __managed__, DtoH */ \
 
 #define K_PARAMS \
-        unsigned shmem_len,
-        K_PARAMS_OUT
+        K_PARAMS_OUT, \
         /* input vector */ \
         const R *cfgs, const uint64_t n_cfgs, \
         /* constants */ \
@@ -105,7 +108,8 @@ void row_search(unsigned shmem_len, K_PARAMS) {
             auto r = cfgs[id];
             for (auto i = 0ull; i < shmem_len && i < n_shmem; i++) {
                 auto fX = shmem[i];
-                impl(r, Reverse ? fX : fY, Reverse ? fY : fX,
+                if (fX.shape & fY.shape) [[unlikely]] return;
+                impl<H>(r, Reverse ? fX : fY, Reverse ? fY : fX,
                     ring_buffer, n_outs, n_chunks,
                     n_reader_chunk, n_writer_chunk, ea);
             }
@@ -113,20 +117,20 @@ void row_search(unsigned shmem_len, K_PARAMS) {
     }
 }
 
-template <unsigned H>
+template <unsigned H, auto>
 __global__
-void simple_row_search<H, KOpt::NONE>(K_PARAMS) {
+void simple_row_search(unsigned, K_PARAMS) {
     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
     if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
     auto r = cfgs[idx / f0Rsz / f0Lsz];
     auto fL = f0L[idx / f0Rsz % f0Lsz];
     auto fR = f0R[idx % f0Rsz];
     if (fL.shape & fR.shape) [[unlikely]] return;
-    impl(r, fL, fR, ring_buffer, n_outs, n_chunks,
+    impl<H>(r, fL, fR, ring_buffer, n_outs, n_chunks,
             n_reader_chunk, n_writer_chunk, ea);
 }
 
-void KParams::launch(cudaStream_t stream) {
+void KParamsFull::launch(cudaStream_t stream) {
 #define ARGS \
     shmem_len, \
     ring_buffer, n_outs, n_chunks, \
@@ -135,18 +139,79 @@ void KParams::launch(cudaStream_t stream) {
     ea, f0L, f0Lsz, f0R, f0Rsz
 
 #define L(k, t) \
-    do { if (height == 8) k<8 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 7) k<7 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 6) k<6 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 5) k<5 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 4) k<4 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 3) k<3 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 2) k<2 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 1) k<1 t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    do { if (height == 8) k<8, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    else if (height == 7) k<7, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    else if (height == 6) k<6, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    else if (height == 5) k<5, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    else if (height == 4) k<4, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    else if (height == 3) k<3, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    else if (height == 2) k<2, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    else if (height == 1) k<1, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
     else throw std::runtime_error{ std::format("height {} not supported", height) }; \
     } while (false)
 
-    if (!shmem_len) L(simple_row_search, );
+    if (!shmem_len) L(simple_row_search, 0);
     else if (reverse) L(row_search, true);
     else L(row_search, false);
+}
+
+static unsigned known_t[]{ 96, 128, 192, 256, 384, 512, 768 };
+static unsigned known_shmem[]{ 426, 597, 981, 1322, 2048, 2730, 4181 };
+
+#ifdef BMARK
+std::vector<KParams> KSizing::optimize() const {
+#else
+KParams KSizing::optimize() const {
+#endif
+    std::vector<KParams> pars;
+    auto n = n_cfgs * f0Lsz * f0Rsz;
+    for (auto t = 1ull; t <= 512u; t <<= 1)
+        if ((n + t - 1) / t <= 2147483647ull)
+            pars.emplace_back(*this, false, (n + t - 1) / t, t, 0);
+    for (auto t = 3ull; t <= 1024u; t <<= 1)
+        if ((n + t - 1) / t <= 2147483647ull)
+            pars.emplace_back(*this, false, (n + t - 1) / t, t, 0);
+    auto wpn = (n_cfgs + 31) / 32;
+    for (auto i = 0; i < 7; i++)
+        for (auto b = 1ull; b <= wpn && b <= 2147483647ull; b <<= 1) {
+            pars.emplace_back(*this, false, b, known_t[i], known_shmem[i]);
+            pars.emplace_back(*this, true, b, known_t[i], known_shmem[i]);
+        }
+    std::ranges::sort(pars, std::less{}, [](const KParams &kp) { return kp.fom(); });
+#ifdef BMARK
+    return pars;
+#else
+    return pars.front();
+#endif
+}
+
+double KParams::fom() const {
+    auto oc = 1536 / threads * 84;
+
+    auto v = 0.0;
+
+    if (shmem_len == 0) {
+        v = ((threads + 31) / 32 * 32) * 60.0;
+    } else {
+        auto f0Xsz = f0Rsz;
+        auto f0Ysz = f0Lsz;
+        if (reverse)
+            std::swap(f0Xsz, f0Ysz);
+
+        auto wpb = static_cast<uint64_t>(threads) / 32;
+        auto wpg = static_cast<uint64_t>(blocks) * wpb;
+        auto wpn = (n_cfgs + 32 - 1) / 32;
+        auto iterations = (wpn * f0Ysz + wpg - 1) / wpg;
+
+        auto outer_loop = (f0Xsz + shmem_len - 1) / shmem_len;
+
+        auto shmem_loop = std::min(f0Xsz, shmem_len) / blocks;
+        v += outer_loop * (4.0 + shmem_loop); // load shmem
+
+        v += outer_loop * iterations * 16.0; // load fY
+        v += outer_loop * iterations * 20.0; // load cfgs[id]
+
+        v += outer_loop * iterations * std::min(f0Xsz, shmem_len) * 5.0; // compute
+    }
+    return v * (blocks + oc - 1) / oc;
 }
