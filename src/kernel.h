@@ -51,3 +51,20 @@ struct KParamsFull : KParams {
 };
 
 void prepare_kernels(); // must be called before KParamsFull::launch
+
+#define K_PARAMS_OUT \
+        /* output ring buffer */ \
+        RX                 *ring_buffer, /* __device__ */ \
+        unsigned long long *n_outs, /* __device__ */ \
+        unsigned long long n_chunks, \
+        unsigned long long *n_reader_chunk, /* __managed__, HtoD */ \
+        unsigned long long *n_writer_chunk /* __managed__, DtoH */ \
+
+#define K_PARAMS \
+        K_PARAMS_OUT, \
+        /* input vector */ \
+        const R *cfgs, const uint64_t n_cfgs, \
+        /* constants */ \
+        uint8_t ea, \
+        const frow_t *f0L, const uint32_t f0Lsz, \
+        const frow_t *f0R, const uint32_t f0Rsz

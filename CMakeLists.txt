@@ -77,6 +77,7 @@ else()
         src/frow.cpp
         src/frow.cu
         src/kernel.cu
+        src/kernel_impl.cu
         src/known1.cpp
         src/known2.cpp
         src/record.cu
@@ -86,7 +87,7 @@ else()
     target_compile_options(kernel PUBLIC -g -O3)
     target_link_libraries(kernel PRIVATE cuda)
     target_link_libraries(kernel PRIVATE curand)
-    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -G>)
+    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -lineinfo>)
     set_target_properties(kernel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
     set_target_properties(kernel PROPERTIES CUDA_ARCHITECTURES "86")
 

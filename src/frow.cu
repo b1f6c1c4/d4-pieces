@@ -73,7 +73,7 @@ void show_gpu_devices() {
     printf("  L2 Cache Size (KiB): %d\n",prop.l2CacheSize / 1024);
     printf("  Shared mem per block (KiB): %lu\n",prop.sharedMemPerBlock / 1024);
     printf("  Shared mem per mp (KiB): %lu\n",prop.sharedMemPerMultiprocessor / 1024);
-    printf("  Const mem (B): %lu\n",prop.totalConstMem / 1024);
+    printf("  Const mem (KiB): %lu\n",prop.totalConstMem / 1024);
     printf("  Global mem (MiB): %lf\n",prop.totalGlobalMem / 1024.0 / 1024);
     int v;
     cudaDeviceGetAttribute(&v, cudaDevAttrMemSyncDomainCount, i);
