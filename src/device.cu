@@ -11,57 +11,11 @@
 
 using namespace std::chrono_literals;
 
-template <typename ... TArgs>
-static void launch(unsigned b, unsigned t, cudaStream_t s, unsigned height,
-        TArgs && ... args) {
-    if (height == 8)
-        d_row_search<8><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else if (height == 7)
-        d_row_search<7><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else if (height == 6)
-        d_row_search<6><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else if (height == 5)
-        d_row_search<5><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else if (height == 4)
-        d_row_search<4><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else if (height == 3)
-        d_row_search<3><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else if (height == 2)
-        d_row_search<2><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else if (height == 1)
-        d_row_search<1><<<b, t, 0, s>>>(std::forward<TArgs>(args)...);
-    else
-        throw std::runtime_error{ std::format("height {} not supported", height) };
-}
-
-static std::pair<uint64_t, uint32_t> balance(uint64_t n) {
-    if (n <= 32)
-        return { 1, n };
-    if (n <= 32 * 84 * 3)
-        return { (n + 31) / 32, 32 };
-    if (n <= 64 * 84 * 3)
-        return { (n + 63) / 64, 64 };
-    if (n <= 96 * 84 * 3)
-        return { (n + 95) / 96, 96 };
-    if (n <= 128 * 84 * 3)
-        return { (n + 127) / 128, 128 };
-    if (n <= 256 * 84 * 3)
-        return { (n + 255) / 256, 256 };
-    return { (n + 511) / 512, 512 };
-}
-
-Device::Input::Input(WL work, int dev, unsigned height) : WL{ work }, p{} {
-    auto l = pos >> 0 & 0b1111u;
-    auto r = pos >> 4 & 0b1111u;
-    auto szid = min(height - 1, 5);
-    fanoutL = h_frowInfoL[l].sz[szid];
-    fanoutR = h_frowInfoR[r].sz[szid];
-    sz = len * fanoutL * fanoutR;
-    d_f0L = d_frowDataL[dev][l];
-    d_f0R = d_frowDataR[dev][r];
-    std::tie(b, t) = balance(sz);
-    load = b * t;
-}
+Device::Input::Input(WL work, int dev, unsigned height)
+    : WL{ work }, szid{ min(height - 1, 5) }, kp{ KSizing{ len,
+        h_frowInfoL[pos >> 0 & 0b1111u].sz[szid],
+        h_frowInfoR[pos >> 4 & 0b1111u].sz[szid] }.optimize() },
+      p{} { }
 
 Device::Device(int d, unsigned h, Sorter &s)
     : dev{ d }, height{ h }, sorter{ s } {
@@ -130,9 +84,9 @@ again:
         C(cudaEventDestroy(work.ev_c));
         work.ev_c = cudaEvent_t{};
         auto wl = c_workload.load(std::memory_order_relaxed);
-        auto fin = c_finished.fetch_add(work.load, std::memory_order_relaxed) + work.load;
-        std::cout << std::format("dev#{}.c: {}/{} = {:.2f}% done, free up {}B device mem ({} entries)\n",
-                dev, display(fin), display(wl), 100.0 * fin / wl,
+        auto fin = c_finished.fetch_add(work.kp.fom(), std::memory_order_relaxed) + work.kp.fom();
+        std::cout << std::format("dev#{}.c: {:.2f}/{:.2f}s = {:.2f}% done, free up {}B device mem ({} entries)\n",
+                dev, fin, wl, 100.0 * fin / wl,
                 display(work.len * sizeof(R)), work.len);
         if (work.device_accessible())
             work.dispose();
@@ -155,32 +109,30 @@ again:
         xc_queue.pop_front();
         lock.unlock();
         { // dispatch logic
+            KParamsFull kpf{ work.kp, height,
+                ring_buffer, n_outs, n_chunks,
+                &counters[0], &counters[1],
+                work.ptr, (uint8_t)work.pos,
+                d_frowDataL[dev][work.pos >> 0 & 0xfu],
+                d_frowDataR[dev][work.pos >> 4 & 0xfu] };
             std::cout << std::format(
-                    "dev#{}.c: 0b{:08b}<<<{:8}, {:3}>>> = {:<6}*L{:<5}*R{:<5} => {:>9}B\n",
-                    dev, work.pos, work.b, work.t,
-                    work.len, work.fanoutL, work.fanoutR, display(work.sz * sizeof(R)));
+                    "dev#{}.c: {:08b}<<<{:8},{:4},{:5}B>>>[{}] = {:<6}*L{:<5}*R{:<5} ~ {:.2f}s\n",
+                    dev, work.pos,
+                    kpf.blocks, kpf.threads, kpf.shmem_len * sizeof(frow32_t),
+                    kpf.shmem_len ? "-" : kpf.reverse ? "L" : "R",
+                    kpf.n_cfgs, kpf.f0Lsz, kpf.f0Rsz, kpf.fom());
             if (!work.device_accessible()) {
                 C(cudaMallocAsync(&work.p, work.len * sizeof(R), c_stream));
                 C(cudaMemcpyAsync(work.p, work.ptr, work.len * sizeof(R),
                             cudaMemcpyHostToDevice, c_stream));
                 C(cudaEventCreateWithFlags(&work.ev_m, cudaEventDisableTiming));
                 C(cudaEventRecord(work.ev_m, c_stream));
+                kpf.cfgs = work.p;
             } else {
                 C(cudaMemAdvise(work.ptr, work.len * sizeof(R), cudaMemAdviseSetReadMostly, dev));
                 C(cudaMemPrefetchAsync(work.ptr, work.len * sizeof(R), dev, c_stream));
             }
-            launch(work.b, work.t, c_stream, height,
-                    // output ring buffer
-                    ring_buffer, n_outs,
-                    n_chunks,
-                    &counters[0], &counters[1],
-                    // input vector
-                    work.device_accessible() ? work.ptr : work.p,
-                    work.len,
-                    // constants
-                    work.pos,
-                    work.d_f0L, work.fanoutL,
-                    work.d_f0R, work.fanoutR);
+            kpf.launch(c_stream);
             C(cudaEventCreateWithFlags(&work.ev_c, cudaEventDisableTiming));
             C(cudaEventRecord(work.ev_c, c_stream));
             c_works.emplace_back(work);
@@ -326,7 +278,7 @@ void Device::dispatch(WL cfgs) {
     std::unique_lock lock{ mtx };
     cv.wait(lock, [this]{ return xc_ready; });
     auto &work = xc_queue.emplace_back(cfgs, dev, height);
-    c_workload += work.b * work.t;
+    c_workload += work.kp.fom();
     cv.notify_all();
 }
 

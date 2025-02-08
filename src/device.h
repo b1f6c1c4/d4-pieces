@@ -10,16 +10,14 @@
 #include "record.h"
 #include "region.h"
 #include "frow.h"
+#include "kernel.h"
 #include "sorter.hpp"
 
 class Device {
-    struct Input : WL { // : Rg<X>
+    struct Input : WL { // Rg<X> + pos
         cudaEvent_t ev_m, ev_c;
-        uint64_t sz;
-        uint32_t b, t, shmem_len;
-        const frow_t *d_f0L, *d_f0R;
-        uint32_t fanoutL, fanoutR;
-        uint64_t load;
+        unsigned szid;
+        KParams kp;
         Input(WL work, int dev, unsigned height);
         Input(const Input &other) = default;
         Input(Input &&other) = default;
@@ -63,8 +61,9 @@ class Device {
     std::deque<Input> xc_queue{}; // before dispatching
     // }
 
-    std::atomic<uint64_t> c_workload{}; // # threads
-    std::atomic<uint64_t> c_finished{}; // # threads
+    // seconds, estimated by KParams::fom()
+    std::atomic<double> c_workload{};
+    std::atomic<double> c_finished{};
 
     // c:cudaMallocAsync m:cudaFree
     // __device__

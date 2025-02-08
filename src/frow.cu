@@ -3,7 +3,7 @@
 
 int n_devices;
 CUcontext cuda_ctxs[128];
-frow_t *d_frowDataL[128][16], *d_frowDataR[128][16];
+frow32_t *d_frowDataL[128][16], *d_frowDataR[128][16];
 
 void transfer_frow_to_gpu() {
     C(cudaGetDeviceCount(&n_devices));
@@ -18,10 +18,10 @@ void transfer_frow_to_gpu() {
         for (auto i = 0; i < 16; i++) {
             C(cudaMalloc(&d_frowDataL[d][i], h_frowInfoL[i].sz[5] * sizeof(frow_t)));
             C(cudaMalloc(&d_frowDataR[d][i], h_frowInfoR[i].sz[5] * sizeof(frow_t)));
-            C(cudaMemcpyAsync(d_frowDataL[d][i], h_frowInfoL[i].data,
-                        h_frowInfoL[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
-            C(cudaMemcpyAsync(d_frowDataR[d][i], h_frowInfoR[i].data,
-                        h_frowInfoR[i].sz[5] * sizeof(frow_t), cudaMemcpyHostToDevice));
+            C(cudaMemcpyAsync(d_frowDataL[d][i], h_frowInfoL[i].data32,
+                        h_frowInfoL[i].sz[5] * sizeof(frow32_t), cudaMemcpyHostToDevice));
+            C(cudaMemcpyAsync(d_frowDataR[d][i], h_frowInfoR[i].data32,
+                        h_frowInfoR[i].sz[5] * sizeof(frow32_t), cudaMemcpyHostToDevice));
         }
         C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
         size_t drplc;

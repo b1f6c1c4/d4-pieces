@@ -39,7 +39,7 @@ struct frow_info_t {
 // defined in frow.cu
 extern int n_devices;
 extern frow_info_t h_frowInfoL[16], h_frowInfoR[16]; // defined in frow.cpp
-extern frow_t *d_frowDataL[128][16], *d_frowDataR[128][16];
+extern frow32_t *d_frowDataL[128][16], *d_frowDataR[128][16];
 #ifdef __CUDA_ARCH__
 extern CUcontext cuda_ctxs[128];
 #endif

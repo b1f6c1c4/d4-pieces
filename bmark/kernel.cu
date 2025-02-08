@@ -1,6 +1,8 @@
 #include <vector>
 
 #include <curand.h>
+#include <cuda_profiler_api.h>
+#include <cudaProfiler.h>
 
 #include <format>
 #include <iostream>
@@ -25,7 +27,7 @@ extern std::optional<Naming> g_nme;
 extern unsigned g_sym;
 
 // #define N_CHUNKS 45
-#define N_CHUNKS 9
+#define N_CHUNKS 2
 __managed__ R *cfgs;
 
 template <unsigned H>
@@ -148,6 +150,7 @@ int main(int argc, char *argv[]) {
     unsigned long long *n_outs;
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), stream));
 
+    C(cuProfilerStart());
     auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
     for (auto it = pars.rbegin(); it != pars.rend(); it++)
         (void)it->fom();
@@ -216,4 +219,5 @@ int main(int argc, char *argv[]) {
     }
 
     C(cudaStreamDestroy(stream));
+    C(cuProfilerStop());
 }

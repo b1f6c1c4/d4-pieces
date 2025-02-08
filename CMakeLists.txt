@@ -51,6 +51,7 @@ else()
         src/frow.cu
         src/frow.cpp
         src/kernel.cu
+        src/kernel_impl.cu
         src/device.cu
         src/record.cu
         src/region.cu
