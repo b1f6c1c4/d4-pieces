@@ -15,7 +15,7 @@
 uint64_t Searcher::step(Shape<8> empty_area) {
     std::print("{}CudaSearcher::CudaSearcher(ea={})\n", empty_area.to_string(), empty_area.size());
     CudaSearcher cs{ empty_area.get_value() };
-    while (cs.get_height()) {
+    while (cs.get_height() >= 7) {
         std::print("height={} size={}={:.02f}GiB next={}={:.02f}GiB avg={:.1f}x \n",
                 cs.get_height(),
                 cs.size(), sizeof(R) * cs.size() / 1073741824.0,

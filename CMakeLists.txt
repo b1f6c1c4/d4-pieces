@@ -49,6 +49,7 @@ else()
         src/frow.cu
         src/frow.cpp
         src/kernel.cu
+        src/kernel.cpp
         src/device.cu
         src/record.cu
         src/region.cu
@@ -63,7 +64,7 @@ else()
     target_link_libraries(search PRIVATE cuda)
     target_compile_options(search PRIVATE -O3 -march=native)
     target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-g>)
-    target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g>)
+    target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -lineinfo>)
     target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>)
     set_target_properties(search PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
     set_target_properties(search PROPERTIES CUDA_ARCHITECTURES "86")

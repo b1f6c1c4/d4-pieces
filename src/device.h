@@ -16,7 +16,7 @@ class Device {
     struct Input : WL { // : Rg<X>
         cudaEvent_t ev_m, ev_c;
         uint64_t sz;
-        uint32_t b, t;
+        uint32_t b, t, shmem_len;
         const frow_t *d_f0L, *d_f0R;
         uint32_t fanoutL, fanoutR;
         uint64_t load;
