@@ -73,12 +73,12 @@ void launch_fix_cfgs(unsigned H, unsigned long long n_cfgs, cudaStream_t s) {
 
 void show(const KParams &res) {
     if (res.shmem_len) {
-        std::cout << std::format("<<<{:9},{:5},{:5}B>>>[{}]/{:.02e} => ",
+        std::cout << std::format("<<<{:10},{:5},{:5}B>>>[{}]/{:.02e} => ",
                 res.blocks, res.threads, res.shmem_len * sizeof(frow32_t),
                 res.reverse ? "L" : "R",
                 res.fom());
     } else {
-        std::cout << std::format("<<<{:9},{:5}>>>  [legacy]/{:.02e} => ",
+        std::cout << std::format("<<<{:10},{:5}>>>  [legacy]/{:.02e} => ",
                 res.blocks, res.threads,
                 res.fom());
     }
@@ -149,15 +149,28 @@ int main(int argc, char *argv[]) {
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), stream));
 
     auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
-    for (auto &res : pars)
-        show(res), std::cout << "\n";
+    for (auto it = pars.rbegin(); it != pars.rend(); it++)
+        (void)it->fom();
     if (pars.size() > n_pars)
         pars.erase(pars.begin() + n_pars, pars.end());
-    // std::vector<KParams> pars;
     // pars.push_back(KParams{
     //         KSizing{ n_cfgs, fanoutL, fanoutR },
     //         false,
     //         84*2,
+    //         768,
+    //         50176 / sizeof(frow32_t)
+    //         });
+    // pars.push_back(KParams{
+    //         KSizing{ n_cfgs, fanoutL, fanoutR },
+    //         false,
+    //         1344,
+    //         1,
+    //         50176 / sizeof(frow32_t)
+    //         });
+    // pars.push_back(KParams{
+    //         KSizing{ n_cfgs, fanoutL, fanoutR },
+    //         false,
+    //         1,
     //         768,
     //         50176 / sizeof(frow32_t)
     //         });
