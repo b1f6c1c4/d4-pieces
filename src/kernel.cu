@@ -68,6 +68,7 @@ spin:
 // X is coalesced and cached at shmem
 template <unsigned H, bool Reverse>
 __global__
+__launch_bounds__(768, 2)
 void row_search(unsigned shmem_len, K_PARAMS) {
     extern __shared__ frow_t shmem[/* shmem_len */];
 
@@ -139,14 +140,14 @@ void KParamsFull::launch(cudaStream_t stream) {
     ea, f0L, f0Lsz, f0R, f0Rsz
 
 #define L(k, t) \
-    do { if (height == 8) k<8, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 7) k<7, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 6) k<6, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 5) k<5, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 4) k<4, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 3) k<3, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 2) k<2, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
-    else if (height == 1) k<1, t><<<blocks, threads, shmem_len, stream>>>(ARGS); \
+    do { if (height == 8) k<8, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
+    else if (height == 7) k<7, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
+    else if (height == 6) k<6, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
+    else if (height == 5) k<5, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
+    else if (height == 4) k<4, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
+    else if (height == 3) k<3, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
+    else if (height == 2) k<2, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
+    else if (height == 1) k<1, t><<<blocks, threads, shmem_len * sizeof(frow_t), stream>>>(ARGS); \
     else throw std::runtime_error{ std::format("height {} not supported", height) }; \
     } while (false)
 
@@ -155,8 +156,19 @@ void KParamsFull::launch(cudaStream_t stream) {
     else L(row_search, false);
 }
 
+void prepare_kernels() {
+#define S(k) \
+    C(cudaFuncSetAttribute(k, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared)); \
+    C(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, 4181 * sizeof(frow_t)));
+#define COMMA ,
+#define SS(k, t) S(k<8 COMMA t>) S(k<7 COMMA t>) S(k<6 COMMA t>) S(k<5 COMMA t>) S(k<4 COMMA t>) S(k<3 COMMA t>) S(k<2 COMMA t>) S(k<1 COMMA t>)
+    SS(simple_row_search, 0)
+    SS(row_search, true)
+    SS(row_search, false)
+}
+
 static unsigned known_t[]{ 96, 128, 192, 256, 384, 512, 768 };
-static unsigned known_shmem[]{ 426, 597, 981, 1322, 2048, 2730, 4181 };
+static unsigned known_shmem_b[]{ 5120, 7168, 11776, 15872, 24576, 32768, 50176 };
 
 #ifdef BMARK
 std::vector<KParams> KSizing::optimize() const {
@@ -174,8 +186,8 @@ KParams KSizing::optimize() const {
     auto wpn = (n_cfgs + 31) / 32;
     for (auto i = 0; i < 7; i++)
         for (auto b = 1ull; b <= wpn && b <= 2147483647ull; b <<= 1) {
-            pars.emplace_back(*this, false, b, known_t[i], known_shmem[i]);
-            pars.emplace_back(*this, true, b, known_t[i], known_shmem[i]);
+            pars.emplace_back(*this, false, b, known_t[i], known_shmem_b[i] / sizeof(frow_t));
+            pars.emplace_back(*this, true, b, known_t[i], known_shmem_b[i] / sizeof(frow_t));
         }
     std::ranges::sort(pars, std::less{}, [](const KParams &kp) { return kp.fom(); });
 #ifdef BMARK

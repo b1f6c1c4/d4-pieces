@@ -20,10 +20,10 @@ add_compile_options(-Wno-unknown-pragmas)
 add_compile_options(-Wno-sign-compare)
 add_compile_options(-Wno-unused-command-line-argument)
 set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--no-undefined")
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 
 if(EMSCRIPTEN)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
     add_executable(pieces src/wasm.cpp src/Piece.cpp src/Shape.cpp src/known.cpp src/Group.cpp)
     target_link_options(pieces PRIVATE -sWASM_BIGINT)
     target_link_options(pieces PRIVATE -sASSERTIONS)
@@ -42,6 +42,7 @@ if(EMSCRIPTEN)
     target_link_options(profile PRIVATE -sENVIRONMENT=shell)
     target_link_options(profile PRIVATE -sMODULARIZE=0)
 else()
+    # set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
     add_executable(search
         src/search.cpp
         src/searcher.cpp
@@ -85,7 +86,7 @@ else()
     target_compile_options(kernel PUBLIC -g -O3)
     target_link_libraries(kernel PRIVATE cuda)
     target_link_libraries(kernel PRIVATE curand)
-    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -lineinfo>)
+    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -G>)
     set_target_properties(kernel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
     set_target_properties(kernel PROPERTIES CUDA_ARCHITECTURES "86")
 

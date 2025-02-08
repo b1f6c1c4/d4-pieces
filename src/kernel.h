@@ -49,3 +49,5 @@ struct KParamsFull : KParams {
 
     void launch(cudaStream_t stream);
 };
+
+void prepare_kernels(); // must be called before KParamsFull::launch

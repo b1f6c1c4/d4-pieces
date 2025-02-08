@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
     auto min_n = std::atoi(argv[3]);
     auto max_n = std::atoi(argv[4]);
     auto board_n = std::atoi(argv[5]);
-    auto ea = (uint8_t)std::atoi(argv[6]);
+    auto ea = (uint8_t)std::strtol(argv[6], nullptr, 16);
     auto height = (unsigned)std::atoi(argv[7]);
     auto n_cfgs = (uint64_t)std::atoll(argv[8]);
     g_nme.emplace(
@@ -60,12 +60,19 @@ int main(int argc, char *argv[]) {
     auto fanoutL = h_frowInfoL[(ea >> 0) & 0xfu].sz[szid];
     auto fanoutR = h_frowInfoR[(ea >> 4) & 0xfu].sz[szid];
 
+    prepare_kernels();
+
+    cudaStream_t stream;
+    C(cudaStreamCreate(&stream));
+
     frow_t *f0L, *f0R;
     std::cout << std::format("copy f0L({}), f0R({}) at szid={}\n", fanoutL, fanoutR, szid);
-    C(cudaMalloc(&f0L, fanoutL*sizeof(frow_t)));
-    C(cudaMalloc(&f0R, fanoutR*sizeof(frow_t)));
-    C(cudaMemcpy(f0L, h_frowInfoL[(ea >> 0) & 0xfu].data, fanoutL*sizeof(frow_t), cudaMemcpyHostToDevice));
-    C(cudaMemcpy(f0R, h_frowInfoR[(ea >> 0) & 0xfu].data, fanoutR*sizeof(frow_t), cudaMemcpyHostToDevice));
+    C(cudaMallocAsync(&f0L, fanoutL*sizeof(frow_t), stream));
+    C(cudaMallocAsync(&f0R, fanoutR*sizeof(frow_t), stream));
+    C(cudaMemcpyAsync(f0L, h_frowInfoL[(ea >> 0) & 0xfu].data,
+                fanoutL*sizeof(frow_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMemcpyAsync(f0R, h_frowInfoR[(ea >> 0) & 0xfu].data,
+                fanoutR*sizeof(frow_t), cudaMemcpyHostToDevice, stream));
 
     std::cout << std::format("allocate {} cfgs\n", n_cfgs);
     C(cudaMallocManaged(&cfgs, n_cfgs*sizeof(R)));
@@ -76,23 +83,23 @@ int main(int argc, char *argv[]) {
     C(curandGenerateUniformDouble(gen,
                 reinterpret_cast<double *>(cfgs), n_cfgs*sizeof(R)/sizeof(double)));
 
-    cudaStream_t stream;
-    C(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-
     auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
     pars.erase(pars.begin() + 10, pars.end());
     for (auto res : pars) {
         unsigned long long tmp{};
-        C(cudaMemcpyToSymbol(n_outs, &tmp, sizeof(unsigned long long)));
-        C(cudaMemcpyToSymbol(nrc, &tmp, sizeof(unsigned long long)));
-        C(cudaMemcpyToSymbol(nwc, &tmp, sizeof(unsigned long long)));
+        C(cudaMemcpyToSymbolAsync(n_outs, &tmp, 0,
+                    sizeof(unsigned long long), cudaMemcpyHostToDevice, stream));
+        C(cudaMemcpyToSymbolAsync(nrc, &tmp, 0,
+                    sizeof(unsigned long long), cudaMemcpyHostToDevice, stream));
+        C(cudaMemcpyToSymbolAsync(nwc, &tmp, 0,
+                    sizeof(unsigned long long), cudaMemcpyHostToDevice, stream));
         if (res.shmem_len) {
-            std::cout << std::format("<<<{:9},{:5},{:5}>>>[{}]/{:.02e} => ",
-                    res.blocks, res.threads, res.shmem_len,
+            std::cout << std::format("<<<{:9},{:5},{:5}B>>>[{}]/{:.02e} => ",
+                    res.blocks, res.threads, res.shmem_len * sizeof(frow_t),
                     res.reverse ? "R" : "L",
                     res.fom());
         } else {
-            std::cout << std::format("<<<{:9},{:5}>>> [legacy]/{:.02e} => ",
+            std::cout << std::format("<<<{:9},{:5}>>>  [legacy]/{:.02e} => ",
                     res.blocks, res.threads,
                     res.fom());
         }
@@ -106,11 +113,18 @@ int main(int argc, char *argv[]) {
         C(cudaEventCreate(&stop));
         C(cudaEventRecord(start));
         kpf.launch(stream);
+        C(cudaPeekAtLastError());
         C(cudaEventRecord(stop));
         C(cudaEventSynchronize(stop));
         float ms;
         C(cudaEventElapsedTime(&ms, start, stop));
-        C(cudaMemcpyFromSymbol(&tmp, n_outs, sizeof(unsigned long long)));
+        C(cudaMemcpyFromSymbolAsync(&tmp, n_outs, 0,
+                    sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
+        C(cudaStreamSynchronize(stream));
         std::cout << std::format("{:.08f}ms, n_out={}\n", ms, n_outs);
+        C(cudaEventDestroy(start));
+        C(cudaEventDestroy(stop));
     }
+
+    C(cudaStreamDestroy(stream));
 }
