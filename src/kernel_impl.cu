@@ -9,10 +9,7 @@
 // result, including CUDA_EXCEPTION_4 or CUDA_EXCEPTION_9.
 template <unsigned H>
 __device__ __forceinline__
-static void impl(R r, frow_t fL, frow_t fR, K_PARAMS_OUT, uint8_t ea) {
-    auto cfg = parse_R<H>(r, ea);
-    if (fL.shape & ~cfg.empty_area) [[unlikely]] return;
-    if (fR.shape & ~cfg.empty_area) [[unlikely]] return;
+static void impl(RCfg cfg, frow_t fL, frow_t fR, K_PARAMS_OUT) {
     d_push(cfg.nm_cnt, cfg.ex, fL.nm0123);
     d_push(cfg.nm_cnt, cfg.ex, fR.nm0123);
     d_sn(cfg.nm_cnt, cfg.ex);
@@ -49,63 +46,86 @@ spin:
 #endif
 }
 
+__device__ __forceinline__
+void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
+    auto d = reinterpret_cast<uint32_t *>(dst);
+    auto s = reinterpret_cast<const uint32_t *>(src);
+    for (auto i = threadIdx.x; i < sizeof(frow32_t) / sizeof(uint32_t) * sz; i += blockDim.x) {
+        __pipeline_memcpy_async(d + i, s + i, 4, 0);
+    }
+    __pipeline_commit();
+    __pipeline_wait_prior(0);
+    __syncthreads();
+}
+
 // N is always coalesced
-// Y is never coalesced
-// X is coalesced and cached at shmem
+// L is tiled/coalesced and cached at shmem
+// R is tiled/coalesced and cached at shmem
 template <unsigned H, bool Reverse>
 __global__
 __launch_bounds__(768, 2)
 void row_search(unsigned shmem_len, K_PARAMS) {
-    extern __shared__ frow32_t shmem[/* shmem_len * 3 */];
+    extern __shared__ frow32_t shmem[/* shmem_len */];
 
-    uint32_t f0Xsz, f0Ysz;
-    const frow32_t *f0X, *f0Y;
-    if constexpr (!Reverse) {
-        f0Xsz = f0Rsz, f0Ysz = f0Lsz;
-        f0X = f0R, f0Y = f0L;
-    } else {
-        f0Xsz = f0Lsz, f0Ysz = f0Rsz;
-        f0X = f0L, f0Y = f0R;
+    if constexpr (Reverse) {
+        auto t = f0Lsz;
+        f0Lsz = f0Rsz;
+        f0Rsz = t;
+        auto tt = f0L;
+        f0L = f0R;
+        f0R = tt;
     }
 
-    // some strides / sizes
+    uint32_t Ltile, Rtile;
+    if (f0Lsz + f0Rsz <= shmem_len) {
+        Ltile = f0Lsz, Rtile = f0Rsz;
+    } else if (f0Lsz < shmem_len / 2) {
+        Ltile = f0Lsz, Rtile = shmem_len - f0Lsz;
+    } else if (f0Rsz < shmem_len / 2) {
+        Ltile = shmem_len - f0Rsz, Rtile = f0Rsz;
+    } else {
+        Ltile = shmem_len / 2, Rtile = shmem_len - Ltile;
+    }
+    auto *Lcache = shmem;
+    auto *Rcache = shmem + Ltile;
+
     __builtin_assume(blockDim.x % warpSize == 0);
-    auto wpb = static_cast<uint64_t>(blockDim.x) / warpSize;
-    auto wpg = static_cast<uint64_t>(gridDim.x) * wpb;
-    auto wpn = (n_cfgs + warpSize - 1) / warpSize;
-    auto iterations = (wpn * f0Ysz + wpg - 1) / wpg;
+    auto tpb = static_cast<uint64_t>(blockDim.x);
+    auto tpg = static_cast<uint64_t>(gridDim.x) * tpb;
+    if (tpb * blockIdx.x >= n_cfgs) // this block shouldn't even exist!
+        return;
+    auto idx = threadIdx.x + tpb * blockIdx.x;
 
-    for (auto f0Xoffset = 0u; f0Xoffset < f0Xsz; f0Xoffset += shmem_len) {
-        // every block, do the same: fill shmem upto shmem_len
-        auto n_shmem = min(shmem_len, f0Xsz - f0Xoffset);
-        auto dst = reinterpret_cast<uint32_t *>(shmem);
-        auto src = reinterpret_cast<const uint32_t *>(f0X + f0Xoffset);
-        for (auto i = threadIdx.x; i < 3 * n_shmem; i += blockDim.x) {
-            __pipeline_memcpy_async(dst + i, src + i, 4, 0);
-        }
-        __pipeline_commit();
-        __pipeline_wait_prior(0);
-        __syncthreads();
+    if (f0Rsz <= Rtile)
+        cache_frow(Rcache, f0R, f0Rsz);
 
-        // each warp, inspect the (warpIdx + k * wpg)-th warp
-        auto warpIdx = threadIdx.x / warpSize + blockIdx.x * wpb;
-        for (auto k = 0ull; k < iterations; k++) {
-            auto w = warpIdx + k * wpg;
-            if (w / wpn >= f0Ysz)
-                break;
-            frow32_t fY32 = f0Y[w / wpn];
-            frow_t fY = fY32;
-            if (threadIdx.x % warpSize + w % wpn >= n_cfgs) [[unlikely]]
-                continue;
+    for (auto Loffset = 0u; Loffset < f0Lsz; Loffset += Ltile) {
+        auto Lsz = min(Ltile, f0Lsz - Loffset);
+        cache_frow(Lcache, f0L + Loffset, Lsz);
 
-            auto r = cfgs[threadIdx.x % warpSize + w % wpn];
-            for (auto i = 0ull; i < n_shmem; i++) {
-                frow_t fX = shmem[i];
-                if (fX.shape & fY.shape) [[unlikely]]
-                    continue;
-                impl<H>(r, Reverse ? fX : fY, Reverse ? fY : fX,
-                    ring_buffer, n_outs, n_chunks,
-                    n_reader_chunk, n_writer_chunk, ea);
+        for (auto Roffset = 0u; Roffset < f0Rsz; Roffset += Rtile) {
+            auto Rsz = min(Rtile, f0Rsz - Roffset);
+            if (f0Rsz > Rtile)
+                cache_frow(Rcache, f0R + Roffset, Rsz);
+
+            // each warp, inspect the (warpIdx + k * wpg)-th warp
+            for (auto k = idx; k < n_cfgs; k += tpg) {
+                auto cfg = parse_R<H>(cfgs[k], ea);
+
+                for (auto l = 0u; l < Lsz; l++) {
+                    frow_t fL = Lcache[l];
+                    if (fL.shape & ~cfg.empty_area) [[unlikely]] continue;
+
+                    for (auto r = 0u; r < Rsz; r++) {
+                        frow_t fR = Rcache[r];
+                        if (fR.shape & ~cfg.empty_area) [[unlikely]] continue;
+                        if (fR.shape & fL.shape) [[unlikely]] continue;
+
+                        impl<H>(cfg, Reverse ? fR : fL, Reverse ? fL : fR,
+                            ring_buffer, n_outs, n_chunks,
+                            n_reader_chunk, n_writer_chunk);
+                    }
+                }
             }
         }
     }
@@ -117,11 +137,14 @@ void simple_row_search(unsigned, K_PARAMS) {
     auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
     if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
     auto r = cfgs[idx / f0Rsz / f0Lsz];
+    auto cfg = parse_R<H>(r, ea);
     frow_t fL = f0L[idx / f0Rsz % f0Lsz];
     frow_t fR = f0R[idx % f0Rsz];
+    if (fL.shape & ~cfg.empty_area) [[unlikely]] return;
+    if (fR.shape & ~cfg.empty_area) [[unlikely]] return;
     if (fL.shape & fR.shape) [[unlikely]] return;
-    impl<H>(r, fL, fR, ring_buffer, n_outs, n_chunks,
-            n_reader_chunk, n_writer_chunk, ea);
+    impl<H>(cfg, fL, fR, ring_buffer, n_outs, n_chunks,
+            n_reader_chunk, n_writer_chunk);
 }
 
 template __global__ void simple_row_search<8, 0>(unsigned, K_PARAMS);

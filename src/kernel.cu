@@ -120,36 +120,43 @@ KParams KSizing::optimize() const {
 }
 
 double KParams::fom() const {
-    auto oc = std::min(16u, 1536u / threads) * 84;
+    auto oc = std::min(16u, 1536u / threads) * 84; // max blocks per device
 
     auto v = 0.0;
 
     if (shmem_len == 0) {
         v = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 1.63e-6;
-    } else {
-        auto f0Xsz = f0Rsz;
-        auto f0Ysz = f0Lsz;
-        if (reverse)
-            std::swap(f0Xsz, f0Ysz);
-
-        auto shm = (shmem_len / 3 / 32) * 3 * 32;
-
-        auto wpb = static_cast<uint64_t>(threads) / 32;
-        auto wpg = static_cast<uint64_t>(blocks) * wpb;
-        auto wpn = (n_cfgs + 32 - 1) / 32;
-        auto iterations = (wpn * f0Ysz + wpg - 1) / wpg;
-
-        auto outer_loop = (f0Xsz + shm - 1) / shm;
-
-        auto shmem_loop = std::min(f0Xsz, shm) / blocks;
-        v += outer_loop * (4.0 + shmem_loop); // load shmem
-
-        v += outer_loop * iterations * 16.0; // load fY
-        v += outer_loop * iterations * 20.0; // load cfgs[id]
-
-        v += outer_loop * iterations * std::min(f0Xsz, shm) * 5.0; // compute
-
-        v *= (1.0 + ((threads + 31) / 32 * 32) * 3e-3) * 3.3e-8;
+        return ((blocks + oc - 1) / oc) * v + blocks * 1e-11;
     }
-    return ((blocks + oc - 1) / oc) * v + blocks * 1e-11;
+
+    uint32_t Ltile, Rtile;
+    if (f0Lsz + f0Rsz <= shmem_len) {
+        Ltile = f0Lsz, Rtile = f0Rsz;
+    } else if (f0Lsz < shmem_len / 2) {
+        Ltile = f0Lsz, Rtile = shmem_len - f0Lsz;
+    } else if (f0Rsz < shmem_len / 2) {
+        Ltile = shmem_len - f0Rsz, Rtile = f0Rsz;
+    } else {
+        Ltile = shmem_len / 2, Rtile = shmem_len - Ltile;
+    }
+    auto nL = (f0Lsz + Ltile - 1) / Ltile;
+    auto nR = (f0Rsz + Rtile - 1) / Rtile;
+    if (reverse) {
+        std::swap(Ltile, Rtile);
+        std::swap(nL, nR);
+    }
+
+    auto tpb = static_cast<uint64_t>(threads);
+    auto tpg = static_cast<uint64_t>(blocks) * tpb;
+    auto iterations = (n_cfgs + tpg - 1) / tpg;
+
+    auto mem = 2e-3;
+    v += nL * (1e-1 + Ltile * mem); // load Lcache
+    if (nR == 1) // load Rcache
+        v += (1e-1 + Rtile * mem);
+    else
+        v += nL * nR * (1e-1 + Rtile * mem);
+
+    v += nL * nR * Ltile * Rtile * iterations * 1.0e-7; // compute
+    return ((blocks + oc - 1) / oc) * v;
 }
