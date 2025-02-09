@@ -126,7 +126,7 @@ again:
                 d_frowDataR[dev][work.pos >> 4 & 0xfu] };
             std::cout << std::format(
                     "dev#{}.c: {:08b}{}\n",
-                    dev, work.pos, kpf.to_string());
+                    dev, work.pos, kpf.to_string(true));
             if (!work.device_accessible()) {
                 C(cudaMallocAsync(&work.p, work.len * sizeof(R), c_stream));
                 C(cudaMemcpyAsync(work.p, work.ptr, work.len * sizeof(R),

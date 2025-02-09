@@ -13,14 +13,16 @@
 #include <boost/thread/executors/basic_thread_pool.hpp>
 #include <boost/thread/future.hpp>
 
-struct CudaSearcher {
-    R *d;
-    Rg<R> write_solution(unsigned, size_t sz);
-};
-Rg<R> CudaSearcher::write_solution(unsigned, size_t sz) {
-    std::atomic_ref atm{ d };
-    return Rg<R>{ atm.fetch_add(sz, std::memory_order_relaxed), sz };
+template <typename T>
+void Rg<T>::dispose() { }
+
+template <typename T>
+Rg<T> Rg<T>::make_cpu(size_t len, bool page) {
+    return Rg<T>{ new T[len], len, RgType::DELETE };
 }
+
+template void Rg<RX>::dispose();
+template Rg<R> Rg<R>::make_cpu(size_t len, bool page);
 
 int main(int argc, char *argv[]) {
     auto sz = std::stoll(argv[1]);
@@ -28,7 +30,6 @@ int main(int argc, char *argv[]) {
     auto amplify = std::stoll(argv[3]);
     std::vector<Rg<RX>> data;
     std::bernoulli_distribution dist{ 1 / 1.3 };
-    auto dest = malloc(sz * chunk * sizeof(R));
     std::print("generating {} * {}B = {}B test data\n",
             sz, display(chunk * sizeof(RX)), display(sz * chunk * sizeof(RX)));
     std::mutex mtx;
@@ -62,15 +63,14 @@ int main(int argc, char *argv[]) {
     pool.join();
 
     std::print("launch sorter\n");
-    CudaSearcher cs{ reinterpret_cast<R *>(dest) };
-    Sorter sorter{ cs };
+    Sorter sorter{};
     std::print("dispatching data\n");
     for (auto r : data)
         for (auto i = 0; i < amplify; i++)
-            sorter.push(r, 6);
+            sorter.push(r);
     std::print("Sorter::join\n");
     auto t1 = std::chrono::steady_clock::now();
-    sorter.join();
+    (void)sorter.join();
     auto t2 = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
     if (us < 1000)

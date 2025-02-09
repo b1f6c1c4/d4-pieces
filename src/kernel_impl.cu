@@ -171,6 +171,7 @@ void tiled_row_search(unsigned shmem_len, K_PARAMS) {
         }
     }
 
+#ifdef BMARK
     __nv_atomic_fetch_add(&perf[0], perf_lr,
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
     __nv_atomic_fetch_add(&perf[1], perf_n,
@@ -179,6 +180,7 @@ void tiled_row_search(unsigned shmem_len, K_PARAMS) {
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
     __nv_atomic_fetch_add(&perf[3], perf_comp,
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
+#endif
 }
 
 template <unsigned H, int Coalesced>
@@ -236,6 +238,7 @@ void linear_row_search(unsigned, K_PARAMS) {
     AFTER(comp);
     AFTER(tile);
 
+#ifdef BMARK
     __nv_atomic_fetch_add(&perf[0], perf_lr,
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
     __nv_atomic_fetch_add(&perf[1], perf_n,
@@ -244,6 +247,7 @@ void linear_row_search(unsigned, K_PARAMS) {
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
     __nv_atomic_fetch_add(&perf[3], perf_comp,
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
+#endif
 }
 
 template __global__ void linear_row_search<8, 0>(unsigned, K_PARAMS);

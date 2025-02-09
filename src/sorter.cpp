@@ -94,7 +94,9 @@ std::deque<WL> Sorter::join() {
             answer[pos].pos = pos;
             continue;
         }
-#ifndef SORTER_MLOCKED
+#if defined(BMARK)
+        WL r{ Rg<R>::make_cpu(sz), pos };
+#elif !defined(SORTER_MLOCKED)
         WL r{ Rg<R>::make_managed(sz), pos };
 #else
         WL r{ Rg<R>::make_cuda_mlocked(sz), pos };

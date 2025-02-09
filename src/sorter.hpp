@@ -5,7 +5,6 @@
 #include "record.h"
 #include "region.h"
 
-struct CudaSearcher;
 namespace boost::executors { class basic_thread_pool; }
 struct CSR;
 struct Sorter {
