@@ -1,0 +1,36 @@
+# R 1024 auto auto 516096
+# R 1024 auto auto 258048
+# R 384 auto auto 129024
+# R 384 auto auto 64512
+# R 128 auto auto 32256
+# R 128 auto auto 4096
+legacy 768 auto 1536
+legacy 768 auto 3072
+legacy 768 auto 12288
+legacy 768 auto 24576
+legacy 768 auto 43008
+legacy 768 auto 64512
+legacy 512 auto 1536
+legacy 512 auto 3072
+legacy 512 auto 12288
+legacy 512 auto 24576
+legacy 512 auto 43008
+legacy 512 auto 64512
+legacy 384 auto 1536
+legacy 384 auto 3072
+legacy 384 auto 12288
+legacy 384 auto 24576
+legacy 384 auto 43008
+legacy 384 auto 64512
+legacy 256 auto 1536
+legacy 256 auto 3072
+legacy 256 auto 12288
+legacy 256 auto 24576
+legacy 256 auto 43008
+legacy 256 auto 64512
+legacy 96  auto 1536
+legacy 96  auto 3072
+legacy 96  auto 12288
+legacy 96  auto 24576
+legacy 96  auto 43008
+legacy 96  auto 64512

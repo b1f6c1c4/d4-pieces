@@ -24,8 +24,19 @@ struct KSizing {
     [[nodiscard]] std::string to_string() const;
 };
 
+enum class KKind {
+    // shmem_len == 0
+    Legacy,        // b*t >= n_cfgs * f0Lsz * f0Rsz
+    // shmem_len == (12*threads) B
+    CoalescedR,    // b*t >= n_cfgs * f0Lsz * ceil(f0Rsz/threads)
+    CoalescedL,    // b*t >= n_cfgs * ceil(f0Lsz/threads) * f0Rsz
+    // shmem_len == several KiB
+    TiledStandard, // b*t >= n_cfgs
+    TiledReversed, // b*t >= n_cfgs; not recommended
+};
+
 struct KParams : KSizing {
-    bool reverse;
+    KKind ty;
     uint64_t blocks;
     uint32_t threads;
     unsigned shmem_len;

@@ -10,55 +10,71 @@
 #include "util.cuh"
 #include "util.hpp"
 
-template <unsigned H, int>
+template <unsigned H, int Coalesced>
 __global__
-void legacy_row_search(unsigned, K_PARAMS);
+void linear_row_search(unsigned, K_PARAMS);
 
 template <unsigned H, int W, bool Reverse>
 __global__
 __launch_bounds__(W, 1536 / W)
-void LR_row_search(unsigned shmem_len, K_PARAMS);
+void tiled_row_search(unsigned shmem_len, K_PARAMS);
 
-extern template __global__ void legacy_row_search<8, 0>(unsigned, K_PARAMS);
-extern template __global__ void legacy_row_search<7, 0>(unsigned, K_PARAMS);
-extern template __global__ void legacy_row_search<6, 0>(unsigned, K_PARAMS);
-extern template __global__ void legacy_row_search<5, 0>(unsigned, K_PARAMS);
-extern template __global__ void legacy_row_search<4, 0>(unsigned, K_PARAMS);
-extern template __global__ void legacy_row_search<3, 0>(unsigned, K_PARAMS);
-extern template __global__ void legacy_row_search<2, 0>(unsigned, K_PARAMS);
-extern template __global__ void legacy_row_search<1, 0>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<8, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<7, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<6, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<5, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<4, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<3, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<2, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<1, 768, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<8, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<7, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<6, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<5, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<4, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<3, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<2, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<1, 768, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<8, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<7, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<6, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<5, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<4, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<3, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<2, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<1, 1024, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<8, 1024, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<7, 1024, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<6, 1024, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<5, 1024, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<4, 1024, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<3, 1024, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<2, 1024, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<1, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<8, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<7, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<6, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<5, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<4, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<3, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<2, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<1, 0>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<8, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<7, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<6, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<5, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<4, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<3, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<2, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<1, +1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<8, -1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<7, -1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<6, -1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<5, -1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<4, -1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<3, -1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<2, -1>(unsigned, K_PARAMS);
+extern template __global__ void linear_row_search<1, -1>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<8, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<7, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<6, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<5, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<4, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<3, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<2, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<1, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<8, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<7, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<6, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<5, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<4, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<3, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<2, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<1, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<8, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<7, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<6, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<5, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<4, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<3, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<2, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<1, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<8, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<7, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<6, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<5, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<4, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<3, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<2, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void tiled_row_search<1, 1024, false>(unsigned, K_PARAMS);
 
 #define COMMA ,
 #define CCMMA ,
@@ -76,45 +92,65 @@ void KParamsFull::launch(cudaStream_t stream) {
     cfgs, n_cfgs, \
     ea, f0L, f0Lsz, f0R, f0Rsz ARGS_EX
 
-#define L(k, t) \
-    do { if (height == 8) k<8, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 7) k<7, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 6) k<6, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 5) k<5, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 4) k<4, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 3) k<3, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 2) k<2, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 1) k<1, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
+#define L(sh, k, t) \
+    do { if (height == 8) k<8, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 7) k<7, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 6) k<6, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 5) k<5, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 4) k<4, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 3) k<3, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 2) k<2, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 1) k<1, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
     else throw std::runtime_error{ std::format("height {} not supported", height) }; \
     } while (false)
 
-    if (!shmem_len) L(legacy_row_search, 0);
-    else if (threads > 768)
-        if (reverse) L(LR_row_search, 1024 COMMA true);
-        else L(LR_row_search, 1024 COMMA false);
-    else
-        if (reverse) L(LR_row_search, 768 COMMA true);
-        else L(LR_row_search, 768 COMMA false);
+    switch (ty) {
+        case KKind::Legacy:
+            L(0, linear_row_search, 0);
+            break;
+        case KKind::CoalescedR:
+            L(threads, linear_row_search, +1);
+            break;
+        case KKind::CoalescedL:
+            L(threads, linear_row_search, -1);
+            break;
+        case KKind::TiledStandard:
+            if (threads > 768)
+                L(shmem_len, tiled_row_search, 1024 COMMA false);
+            else
+                L(shmem_len, tiled_row_search, 768 COMMA false);
+            break;
+       case KKind::TiledReversed:
+            if (threads > 1024)
+                L(shmem_len, tiled_row_search, 1024 COMMA true);
+            else
+                L(shmem_len, tiled_row_search, 768 COMMA true);
+            break;
+        default:
+            throw std::runtime_error{ "unknown ty" };
+    }
 }
 
 void prepare_kernels() {
-#define S(...) \
-    C(cudaFuncSetAttribute(__VA_ARGS__, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared)); \
-    C(cudaFuncSetAttribute(__VA_ARGS__, cudaFuncAttributeMaxDynamicSharedMemorySize, 101376));
-#define SS(k, ...) \
-    S(k<8 COMMA __VA_ARGS__>) \
-    S(k<7 COMMA __VA_ARGS__>) \
-    S(k<6 COMMA __VA_ARGS__>) \
-    S(k<5 COMMA __VA_ARGS__>) \
-    S(k<4 COMMA __VA_ARGS__>) \
-    S(k<3 COMMA __VA_ARGS__>) \
-    S(k<2 COMMA __VA_ARGS__>) \
-    S(k<1 COMMA __VA_ARGS__>)
-    SS(legacy_row_search, 0)
-    SS(LR_row_search, 768  COMMA true)
-    SS(LR_row_search, 768  COMMA false)
-    SS(LR_row_search, 1024 COMMA true)
-    SS(LR_row_search, 1024 COMMA false)
+#define S(sz, ...) \
+    C(cudaFuncSetAttribute(__VA_ARGS__, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxL1)); \
+    C(cudaFuncSetAttribute(__VA_ARGS__, cudaFuncAttributeMaxDynamicSharedMemorySize, sz));
+#define SS(sz, k, ...) \
+    S(sz, k<8 COMMA __VA_ARGS__>) \
+    S(sz, k<7 COMMA __VA_ARGS__>) \
+    S(sz, k<6 COMMA __VA_ARGS__>) \
+    S(sz, k<5 COMMA __VA_ARGS__>) \
+    S(sz, k<4 COMMA __VA_ARGS__>) \
+    S(sz, k<3 COMMA __VA_ARGS__>) \
+    S(sz, k<2 COMMA __VA_ARGS__>) \
+    S(sz, k<1 COMMA __VA_ARGS__>)
+    SS(0, linear_row_search, 0)
+    SS(1024 * sizeof(frow32_t), linear_row_search, +1)
+    SS(1024 * sizeof(frow32_t), linear_row_search, -1)
+    SS(101376, tiled_row_search, 768  COMMA true)
+    SS(101376, tiled_row_search, 768  COMMA false)
+    SS(101376, tiled_row_search, 1024 COMMA true)
+    SS(101376, tiled_row_search, 1024 COMMA false)
 }
 
 static unsigned known_t[]{ 96, 128, 192, 256, 384, 512, 768, 1024 };
@@ -127,12 +163,23 @@ KParams KSizing::optimize(bool debug) const {
 #endif
     std::vector<KParams> pars;
     auto n = n_cfgs * f0Lsz * f0Rsz;
+    auto ncR = n_cfgs * ((f0Lsz + 10) / 11) * f0Rsz;
+    auto ncL = n_cfgs * f0Lsz * ((f0Rsz + 10) / 11);
     if (n <= 256 * 2147483647ull)
-        pars.emplace_back(*this, false, (n + 256 - 1) / 256, 256, 0);
+        pars.emplace_back(*this, KKind::Legacy, (n + 256 - 1) / 256, 256, 0);
     else if (n <= 768 * 2147483647ull)
-        pars.emplace_back(*this, false, (n + 768 - 1) / 768, 768, 0);
+        pars.emplace_back(*this, KKind::Legacy, (n + 768 - 1) / 768, 768, 0);
+    if (ncR <= 256 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedR, (ncR + 256 - 1) / 256, 256, 0);
+    else if (ncR <= 768 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedL, (ncR + 768 - 1) / 768, 768, 0);
+    if (ncL <= 256 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedR, (ncL + 256 - 1) / 256, 256, 0);
+    else if (ncL <= 768 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedL, (ncL + 768 - 1) / 768, 768, 0);
     for (auto i = 0; i < 8; i++) {
-        pars.emplace_back(*this, false, (n_cfgs + known_t[i] - 1) / known_t[i],
+        pars.emplace_back(*this, KKind::TiledStandard,
+                (n_cfgs + known_t[i] - 1) / known_t[i],
                 known_t[i], known_shmem_b[i] / sizeof(frow32_t));
     }
     std::ranges::sort(pars, std::less{}, [](const KParams &kp) { return kp.fom(); });
@@ -155,11 +202,23 @@ std::string KSizing::to_string() const {
 
 std::string KParams::to_string(bool full) const {
     std::string s;
-    if (!shmem_len)
-        s = std::format("<<<{:11},{:5}>>>[legacy]", blocks, threads);
-    else
-        s = std::format("<<<{:9},{:5},{:6}>>>[{}]", blocks, threads,
-                shmem_len * sizeof(frow32_t), reverse ? 'L' : 'R');
+    switch (ty) {
+        case KKind::Legacy:
+            s = std::format("<<<{:11},{:5}>>>[legacy]", blocks, threads);
+            break;
+        case KKind::CoalescedR:
+        case KKind::CoalescedL:
+            s = std::format("<<<{:10},{:4},{:5}>>>[C{}]", blocks, threads,
+                    threads * sizeof(frow32_t), ty == KKind::CoalescedL ? 'L' : 'R');
+            break;
+        case KKind::TiledStandard:
+        case KKind::TiledReversed:
+            s = std::format("<<<{:9},{:5},{:6}>>>[{}]", blocks, threads,
+                    shmem_len * sizeof(frow32_t), ty == KKind::TiledReversed ? 'L' : 'R');
+            break;
+        default:
+            throw std::runtime_error{ "unknown ty" };
+    }
     if (full)
         s += KSizing::to_string();
     s += std::format(" ~ {}", display(fom()));
@@ -200,7 +259,7 @@ double KParams::fom() const {
     }
     auto nL = (f0Lsz + Ltile - 1) / Ltile;
     auto nR = (f0Rsz + Rtile - 1) / Rtile;
-    if (reverse) {
+    if (ty == KKind::TiledReversed) {
         std::swap(Ltile, Rtile);
         std::swap(nL, nR);
     }
@@ -223,10 +282,10 @@ double KParams::fom() const {
     if (debug) {
         std::cout << std::format("<<<{:9},{:5},{:6}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f}*{})*{:3}+{:9.2f}={:9.2f}\n",
                 blocks, threads, shmem_len * sizeof(frow32_t),
-                reverse ? "R" : "L",
+                ty == KKind::TiledReversed ? "R" : "L",
                 Ltile,
                 nL,
-                reverse ? "L" : "R",
+                ty == KKind::TiledReversed ? "L" : "R",
                 Rtile,
                 nR,
                 m, c, util, e, n, v);

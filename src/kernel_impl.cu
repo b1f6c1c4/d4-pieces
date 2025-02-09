@@ -51,11 +51,11 @@ void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
     auto d = reinterpret_cast<uint32_t *>(dst);
     auto s = reinterpret_cast<const uint32_t *>(src);
     for (auto i = threadIdx.x; i < sizeof(frow32_t) / sizeof(uint32_t) * sz; i += blockDim.x) {
-        __pipeline_memcpy_async(d + i, s + i, 4, 0);
-        // d[i] = s[i];
+        // __pipeline_memcpy_async(d + i, s + i, 4, 0);
+        d[i] = s[i];
     }
-    __pipeline_commit();
-    __pipeline_wait_prior(0);
+    // __pipeline_commit();
+    // __pipeline_wait_prior(0);
 }
 
 // N is always coalesced
@@ -64,7 +64,7 @@ void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
 template <unsigned H, int W, bool Reverse>
 __global__
 __launch_bounds__(W, 1536 / W)
-void LR_row_search(unsigned shmem_len, K_PARAMS) {
+void tiled_row_search(unsigned shmem_len, K_PARAMS) {
 
     auto tpb = static_cast<uint64_t>(blockDim.x);
     if (tpb * blockIdx.x >= n_cfgs) // this block shouldn't even exist!
@@ -181,9 +181,13 @@ void LR_row_search(unsigned shmem_len, K_PARAMS) {
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
 }
 
-template <unsigned H, int>
+template <unsigned H, int Coalesced>
 __global__
-void legacy_row_search(unsigned, K_PARAMS) {
+__launch_bounds__(768, 2)
+void linear_row_search(unsigned, K_PARAMS) {
+    static_assert(-1 <= Coalesced && Coalesced <= +1,
+            "Coalesced must be -1, 0, +1");
+
 #ifdef BMARK
     long long perf_lr{}, perf_n{}, perf_tile{}, perf_comp{};
 #define BEFORE(X) perf_ ## X -= clock64()
@@ -193,17 +197,50 @@ void legacy_row_search(unsigned, K_PARAMS) {
 #define AFTER(X)
 #endif
 
-    auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
-    if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
-    BEFORE(n);
-    auto r = cfgs[idx / f0Rsz / f0Lsz];
-    AFTER(n);
-    auto cfg = parse_R<H>(r, ea);
-    BEFORE(lr);
-    frow_t fL = f0L[idx / f0Rsz % f0Lsz];
-    frow_t fR = f0R[idx % f0Rsz];
-    AFTER(lr);
+    auto tpb = static_cast<uint64_t>(blockDim.x);
+    auto idx = threadIdx.x + tpb * blockIdx.x;
+
+    R r;
+    frow_t fL, fR;
+    if constexpr (Coalesced == 0) { // N - L - R
+        if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
+        BEFORE(n);
+        r = cfgs[idx / f0Rsz / f0Lsz];
+        AFTER(n);
+        BEFORE(lr);
+        fL = f0L[idx / f0Rsz % f0Lsz];
+        fR = f0R[idx % f0Rsz];
+        AFTER(lr);
+    } else if constexpr (Coalesced == +1) { // N - L - R/blockDim.x
+        extern __shared__ frow32_t Rcache[/* blockDim.x */];
+        auto bpRsz = (f0Rsz + tpb - 1) / tpb;
+        auto Rsz = (blockIdx.x % bpRsz == bpRsz - 1) ? (f0Rsz % tpb) : tpb;
+        BEFORE(n);
+        r = cfgs[blockIdx.x / bpRsz / f0Lsz];
+        AFTER(n);
+        BEFORE(lr);
+        fL = f0L[blockIdx.x / bpRsz % f0Lsz];
+        cache_frow(Rcache, f0R + blockIdx.x % bpRsz * tpb, Rsz);
+        __syncthreads();
+        AFTER(lr);
+        fR = Rcache[threadIdx.x];
+    } else if constexpr (Coalesced == -1) { // N - R - L/blockDim.x
+        extern __shared__ frow32_t Lcache[/* blockDim.x */];
+        auto bpLsz = (f0Lsz + tpb - 1) / tpb;
+        auto Lsz = (blockIdx.x % bpLsz == bpLsz - 1) ? (f0Lsz % tpb) : tpb;
+        BEFORE(n);
+        r = cfgs[blockIdx.x / bpLsz / f0Rsz];
+        AFTER(n);
+        BEFORE(lr);
+        fR = f0R[blockIdx.x / bpLsz % f0Rsz];
+        cache_frow(Lcache, f0L + blockIdx.x % bpLsz * tpb, Lsz);
+        __syncthreads();
+        AFTER(lr);
+        fL = Lcache[threadIdx.x];
+    }
+
     BEFORE(tile);
+    auto cfg = parse_R<H>(r, ea);
     if (fL.shape & ~cfg.empty_area) [[unlikely]] return;
     if (fR.shape & ~cfg.empty_area) [[unlikely]] return;
     if (fL.shape & fR.shape) [[unlikely]] return;
@@ -223,43 +260,59 @@ void legacy_row_search(unsigned, K_PARAMS) {
             __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
 }
 
-template __global__ void legacy_row_search<8, 0>(unsigned, K_PARAMS);
-template __global__ void legacy_row_search<7, 0>(unsigned, K_PARAMS);
-template __global__ void legacy_row_search<6, 0>(unsigned, K_PARAMS);
-template __global__ void legacy_row_search<5, 0>(unsigned, K_PARAMS);
-template __global__ void legacy_row_search<4, 0>(unsigned, K_PARAMS);
-template __global__ void legacy_row_search<3, 0>(unsigned, K_PARAMS);
-template __global__ void legacy_row_search<2, 0>(unsigned, K_PARAMS);
-template __global__ void legacy_row_search<1, 0>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<8, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<7, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<6, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<5, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<4, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<3, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<2, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<1, 768, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<8, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<7, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<6, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<5, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<4, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<3, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<2, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<1, 768, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<8, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<7, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<6, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<5, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<4, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<3, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<2, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<1, 1024, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<8, 1024, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<7, 1024, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<6, 1024, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<5, 1024, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<4, 1024, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<3, 1024, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<2, 1024, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<1, 1024, false>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<8, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<7, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<6, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<5, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<4, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<3, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<2, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<1, 0>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<8, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<7, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<6, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<5, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<4, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<3, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<2, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<1, +1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<8, -1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<7, -1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<6, -1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<5, -1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<4, -1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<3, -1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<2, -1>(unsigned, K_PARAMS);
+template __global__ void linear_row_search<1, -1>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<8, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<7, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<6, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<5, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<4, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<3, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<2, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<1, 768, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<8, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<7, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<6, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<5, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<4, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<3, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<2, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<1, 768, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<8, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<7, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<6, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<5, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<4, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<3, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<2, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<1, 1024, true>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<8, 1024, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<7, 1024, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<6, 1024, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<5, 1024, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<4, 1024, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<3, 1024, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<2, 1024, false>(unsigned, K_PARAMS);
+template __global__ void tiled_row_search<1, 1024, false>(unsigned, K_PARAMS);

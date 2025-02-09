@@ -86,11 +86,14 @@ void launch_fix_cfgs(unsigned H, unsigned long long n_cfgs, cudaStream_t s) {
 
 static KSizing ks;
 
-int default_blocks(bool is_legacy, int threads, uint64_t n_cfgs) {
-    if (is_legacy)
+int default_blocks(const std::string &ty, int threads, uint64_t n_cfgs) {
+    if (ty == "legacy")
         return (n_cfgs * ks.f0Lsz * ks.f0Rsz + threads - 1) / threads;
-    else
-        return (n_cfgs + threads - 1) / threads;
+    if (ty == "CR")
+        return n_cfgs * ks.f0Lsz * ((ks.f0Rsz + threads - 1) / threads);
+    if (ty == "CL")
+        return n_cfgs * ks.f0Rsz * ((ks.f0Lsz + threads - 1) / threads);
+    return (n_cfgs + threads - 1) / threads;
 }
 
 int default_shmem(int threads) {
@@ -131,6 +134,7 @@ char *command_generator(const char *text, int state) {
         // Determine position in the input
         size_t pos = tokens.size();
         bool is_lr = !tokens.empty() && (tokens[0] == "L" || tokens[0] == "R");
+        bool is_co = !tokens.empty() && (tokens[0] == "CL" || tokens[0] == "CR");
         bool is_legacy = !tokens.empty() && tokens[0] == "legacy";
 
         if (pos == 1) {
@@ -138,17 +142,19 @@ char *command_generator(const char *text, int state) {
             if ("list"s.starts_with(text)) matches.push_back("list");
             if ("L"s.starts_with(text)) matches.push_back("L");
             if ("R"s.starts_with(text)) matches.push_back("R");
-        } else if (pos == 2 && (is_lr || is_legacy)) {
+            if ("CL"s.starts_with(text)) matches.push_back("CL");
+            if ("CR"s.starts_with(text)) matches.push_back("CR");
+        } else if (pos == 2 && (is_lr || is_co || is_legacy)) {
             // Complete <threads>
             for (const std::string &thread : THREADS) {
                 if (thread.starts_with(text))
                     matches.push_back(thread);
             }
-        } else if (pos == 3 && (is_lr || is_legacy)) {
+        } else if (pos == 3 && (is_lr || is_co || is_legacy)) {
             // Complete <blocks> (computed from `default_blocks`)
             if ("auto"s.starts_with(text)) matches.push_back("auto");
             int threads = std::stoi(tokens[1]);
-            int blocks = default_blocks(is_legacy, threads, ks.n_cfgs);
+            int blocks = default_blocks(tokens[0], threads, ks.n_cfgs);
             matches.push_back(std::to_string(blocks));
         } else if (pos == 4 && is_lr) {
             // Complete <shmem> (computed from `default_shmem`)
@@ -317,7 +323,13 @@ int main(int argc, char *argv[]) {
         csv << kpf.n_cfgs << ",";
         csv << kpf.f0Lsz << ",";
         csv << kpf.f0Rsz << ",";
-        csv << kpf.reverse << ",";
+        switch (kpf.ty) {
+            case KKind::Legacy: csv << "legacy"; break;
+            case KKind::CoalescedR: csv << "CR"; break;
+            case KKind::CoalescedL: csv << "CL"; break;
+            case KKind::TiledStandard: csv << "R"; break;
+            case KKind::TiledReversed: csv << "L"; break;
+        }
         csv << kpf.blocks << ",";
         csv << kpf.threads << ",";
         csv << kpf.shmem_len << ",";
@@ -336,11 +348,12 @@ int main(int argc, char *argv[]) {
     };
 
     ks = KSizing{ n_cfgs, fanoutL, fanoutR };
-    KParams kp{ ks };
+    KParams kp;
     std::cout << R"(<COMMAND> ::=)" << "\n";
     std::cout << R"(    | "list")" << "\n";
-    std::cout << R"(    | "legacy"  <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
-    std::cout << R"(    | ("L"|"R") <threads> [(<blocks>|"auto") [(<shmem>|"auto") [<n_cfg>]])" << "\n";
+    std::cout << R"(    | "legacy"    <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
+    std::cout << R"(    | ("CL"|"CR") <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
+    std::cout << R"(    | ("L"|"R")   <threads> [(<blocks>|"auto") [(<shmem>|"auto") [<n_cfg>]])" << "\n";
     while (n_pars == -1) {
         auto input = readline("> ");
         if (input == nullptr)
@@ -365,23 +378,34 @@ int main(int argc, char *argv[]) {
             continue;
         }
         if (tokens[0] == "legacy") {
-            kp = KParams{ ks };
+            kp = KParams{ ks, KKind::Legacy };
             kp.threads = std::stoull(tokens[1]);
             if (tokens.size() >= 4)
                 kp.n_cfgs = std::stoull(tokens[3]);
             if (tokens.size() < 3 || tokens[2] == "auto")
-                kp.blocks = default_blocks(true, kp.threads, kp.n_cfgs);
+                kp.blocks = default_blocks(tokens[0], kp.threads, kp.n_cfgs);
+            else
+                kp.blocks = std::stoull(tokens[2]);
+        } else if (tokens[0] == "CL" || tokens[0] == "CR") {
+            kp = KParams{ ks, KKind::CoalescedR };
+            if (tokens[0] == "CL")
+                kp.ty = KKind::CoalescedR;
+            kp.threads = std::stoull(tokens[1]);
+            if (tokens.size() >= 4)
+                kp.n_cfgs = std::stoull(tokens[3]);
+            if (tokens.size() < 3 || tokens[2] == "auto")
+                kp.blocks = default_blocks(tokens[0], kp.threads, kp.n_cfgs);
             else
                 kp.blocks = std::stoull(tokens[2]);
         } else if (tokens[0] == "L" || tokens[0] == "R") {
-            kp = KParams{ ks };
+            kp = KParams{ ks, KKind::TiledStandard };
             if (tokens[0] == "L")
-                kp.reverse = true;
+                kp.ty = KKind::TiledReversed;
             kp.threads = std::stoull(tokens[1]);
             if (tokens.size() >= 5)
                 kp.n_cfgs = std::stoull(tokens[4]);
             if (tokens.size() < 3 || tokens[2] == "auto") {
-                kp.blocks = default_blocks(false, kp.threads, kp.n_cfgs);
+                kp.blocks = default_blocks(tokens[0], kp.threads, kp.n_cfgs);
             } else {
                 kp.blocks = std::stoull(tokens[2]);
             }

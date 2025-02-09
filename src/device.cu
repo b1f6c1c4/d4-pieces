@@ -125,11 +125,8 @@ again:
                 d_frowDataL[dev][work.pos >> 0 & 0xfu],
                 d_frowDataR[dev][work.pos >> 4 & 0xfu] };
             std::cout << std::format(
-                    "dev#{}.c: {:08b}<<<{:8},{:4},{:5}B>>>[{}] = {:<6}*L{:<5}*R{:<5} ~ {}\n",
-                    dev, work.pos,
-                    kpf.blocks, kpf.threads, kpf.shmem_len * sizeof(frow32_t),
-                    !kpf.shmem_len ? "-" : kpf.reverse ? "L" : "R",
-                    kpf.n_cfgs, kpf.f0Lsz, kpf.f0Rsz, display(kpf.fom()));
+                    "dev#{}.c: {:08b}{}\n",
+                    dev, work.pos, kpf.to_string());
             if (!work.device_accessible()) {
                 C(cudaMallocAsync(&work.p, work.len * sizeof(R), c_stream));
                 C(cudaMemcpyAsync(work.p, work.ptr, work.len * sizeof(R),
