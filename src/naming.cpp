@@ -2,8 +2,9 @@
 
 #include <algorithm>
 #include <ranges>
-#include <print>
 #include <numeric>
+
+#include "util.hpp"
 
 uint64_t Naming::binomial(uint64_t n, uint64_t m) {
     static VV cache;

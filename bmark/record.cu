@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
     C(cudaMallocManaged(&icfg, sz * sizeof(R)));
     C(cudaMallocManaged(&ocfg, sz * sizeof(RX)));
     std::mt19937_64 rnd{};
-    std::cout << std::format("generating {} questions\n", sz);
+    std::print("generating {} questions\n", sz);
     for (auto i = 0; i < sz; i++) {
         icfg[i].xaL = rnd();
         icfg[i].xaH = rnd();
@@ -70,21 +70,21 @@ int main(int argc, char *argv[]) {
     auto t2 = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
     if (us < 1000)
-        std::cout << std::format("  => completed in {}us\n", us);
+        std::print("  => completed in {}us\n", us);
     else if (us < 1000000)
-        std::cout << std::format("  => completed in {:.2f}ms\n", us / 1e3);
+        std::print("  => completed in {:.2f}ms\n", us / 1e3);
     else
-        std::cout << std::format("  => completed in {:.2f}s\n", us / 1e6);
-    std::cout << std::format("validating {} questions\n", sz);
+        std::print("  => completed in {:.2f}s\n", us / 1e6);
+    std::print("validating {} questions\n", sz);
     for (auto i = 0; i < sz; i++) {
         if (ocfg[i].ea != 0xa5 || static_cast<R>(ocfg[i]) != icfg[i]) {
-            std::cout << std::format("mismatch @ [{}]:\n", i);
-            std::cout << std::format("  xaL = 0x{:08x} vs 0x{:08x}\n", icfg[i].xaL, ocfg[i].xaL);
-            std::cout << std::format("  xaH = 0x{:08x} vs 0x{:08x}\n", icfg[i].xaH, ocfg[i].xaH);
-            std::cout << std::format("  ex0 = 0x{:08x} vs 0x{:08x}\n", icfg[i].ex0, ocfg[i].ex0);
-            std::cout << std::format("  ex1 = 0x{:08x} vs 0x{:08x}\n", icfg[i].ex1, ocfg[i].ex1);
-            std::cout << std::format("  ex2 = 0x{:08x} vs 0x{:08x}\n", icfg[i].ex2, ocfg[i].ex2);
-            std::cout << std::format("  ea = 0x{:02x}\n", ocfg[i].ea);
+            std::print("mismatch @ [{}]:\n", i);
+            std::print("  xaL = 0x{:08x} vs 0x{:08x}\n", icfg[i].xaL, ocfg[i].xaL);
+            std::print("  xaH = 0x{:08x} vs 0x{:08x}\n", icfg[i].xaH, ocfg[i].xaH);
+            std::print("  ex0 = 0x{:08x} vs 0x{:08x}\n", icfg[i].ex0, ocfg[i].ex0);
+            std::print("  ex1 = 0x{:08x} vs 0x{:08x}\n", icfg[i].ex1, ocfg[i].ex1);
+            std::print("  ex2 = 0x{:08x} vs 0x{:08x}\n", icfg[i].ex2, ocfg[i].ex2);
+            std::print("  ea = 0x{:02x}\n", ocfg[i].ea);
         }
     }
 }

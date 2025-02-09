@@ -1,5 +1,10 @@
 #pragma once
 
+#if defined(__cpp_lib_print)
+#include <print>
+#else
+#include <iostream>
+#endif
 #include <format>
 #include <concepts>
 
@@ -46,3 +51,17 @@ constexpr inline auto count_digits(unsigned long long v) {
     if (v <= 9) return 1ull;
     return 1ull + count_digits(v / 10);
 }
+
+// poly-fill for stupid g++-13
+#if !defined(__cpp_lib_print)
+namespace std {
+    template <typename ... TArgs>
+    void print(std::format_string<TArgs...> fmt, TArgs && ... args) {
+        std::cout << std::format(fmt, std::forward<TArgs>(args)...);
+    }
+    template <typename ... TArgs>
+    void print(std::ostream &os, std::format_string<TArgs...> fmt, TArgs && ... args) {
+        os << std::format(fmt, std::forward<TArgs>(args)...);
+    }
+}
+#endif

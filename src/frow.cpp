@@ -4,10 +4,10 @@
 #include <compare>
 #include <limits>
 #include <optional>
-#include <print>
 #include <ranges>
 #include <set>
 
+#include "util.hpp"
 #include "searcher.hpp"
 
 std::optional<Board<8>> g_board;

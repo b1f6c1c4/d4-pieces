@@ -6,7 +6,6 @@
 #include <fcntl.h>
 #include <iostream>
 #include <mimalloc-new-delete.h>
-#include <print>
 #include <stdexcept>
 #include <stop_token>
 #include <sys/mman.h>

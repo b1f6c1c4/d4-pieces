@@ -199,7 +199,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, &sa, NULL);
 
     if (argc != 9 && argc != 10) {
-        std::cout << std::format(
+        std::print(
                 "Usage: {} <min_m> <max_m> <min_n> <max_n> <board_n> <ea> <height> <n_cfgs> [<n_pars>]\n",
                 argv[0]);
         return 1;
@@ -240,7 +240,7 @@ int main(int argc, char *argv[]) {
     // for unknown reason, accessing d_frowDataX gives invalid memory access
     // transfer_frow_to_gpu();
     frow_info_d f0L, f0R;
-    std::cout << std::format("copy f0L({}), f0R({}) at szid={}\n", fanoutL, fanoutR, szid);
+    std::print("copy f0L({}), f0R({}) at szid={}\n", fanoutL, fanoutR, szid);
     C(cudaMallocAsync(&f0L.data32, fanoutL*sizeof(frow32_t), stream));
     C(cudaMallocAsync(&f0R.data32, fanoutR*sizeof(frow32_t), stream));
     C(cudaMemcpyAsync(f0L.data32, h_frowInfoL[(ea >> 0) & 0xfu].data32,
@@ -266,15 +266,15 @@ int main(int argc, char *argv[]) {
     C(cudaMemcpyAsync(f0R.data0123, h_frowInfoR[(ea >> 4) & 0xfu].data0123,
                 fanoutR*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
 
-    std::cout << std::format("allocate {} cfgs\n", n_cfgs);
+    std::print("allocate {} cfgs\n", n_cfgs);
     C(cudaMallocManaged(&cfgs, n_cfgs*sizeof(R)));
-    std::cout << std::format("randomize {} cfgs\n", n_cfgs);
+    std::print("randomize {} cfgs\n", n_cfgs);
     curandGenerator_t gen;
     C(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
     C(curandSetPseudoRandomGeneratorSeed(gen, 23336666));
     C(curandGenerateUniformDouble(gen,
                 reinterpret_cast<double *>(cfgs), n_cfgs*sizeof(R)/sizeof(double)));
-    std::cout << std::format("patch {} cfgs\n", n_cfgs);
+    std::print("patch {} cfgs\n", n_cfgs);
     launch_fix_cfgs(height, n_cfgs, stream);
     C(cudaPeekAtLastError());
 
@@ -333,7 +333,7 @@ int main(int argc, char *argv[]) {
         auto perf_tile = perfs[2];
         auto perf_comp = perfs[3];
         auto ex = 1000 * (perf_lr + perf_n + perf_tile) / rt / ms;
-        std::cout << std::format("{} / {:.01f}ms = ({:>7}+{:>7}+{:>7})*{} I{:.02f}% E{:.02f}% raw({:>7}+{:>7}+{:>7})\n",
+        std::print("{} / {:.01f}ms = ({:>7}+{:>7}+{:>7})*{} I{:.02f}% E{:.02f}% raw({:>7}+{:>7}+{:>7})\n",
                 outs, ms,
                 display(perf_lr / rt / ex / e), display(perf_n / rt / ex / e), display(perf_tile / rt / ex / e),
                 e,

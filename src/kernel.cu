@@ -187,10 +187,10 @@ KParams KSizing::optimize(bool debug) const {
     return pars;
 #else
     if (debug) {
-        std::cout << std::format("kernel#optimize: best kernel params for {} are:\n",
+        std::print("kernel#optimize: best kernel params for {} are:\n",
                 to_string());
         for (auto i = 0zu; i < pars.size() && i < 10zu; i++)
-            std::cout << std::format("      #{}\n", pars[i].to_string(false));
+            std::print("      #{}\n", pars[i].to_string(false));
     }
     return pars.front();
 #endif
@@ -239,7 +239,7 @@ double KParams::fom() const {
         auto v = e * c + blocks * 1e-11;
 #ifdef BMARK
         if (debug) {
-            std::cout << std::format("<<<{:10},{:5}>>>  [legacy] {:9.2e}*{:3} + {:9.2f} ={:9.2f}\n",
+            std::print("<<<{:10},{:5}>>>  [legacy] {:9.2e}*{:3} + {:9.2f} ={:9.2f}\n",
                     blocks, threads,
                     c, e, blocks * 1e-11, v);
         }
@@ -280,7 +280,7 @@ double KParams::fom() const {
     auto v = e * (m + c * util) + n;
 #ifdef BMARK
     if (debug) {
-        std::cout << std::format("<<<{:9},{:5},{:6}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f}*{})*{:3}+{:9.2f}={:9.2f}\n",
+        std::print("<<<{:9},{:5},{:6}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f}*{})*{:3}+{:9.2f}={:9.2f}\n",
                 blocks, threads, shmem_len * sizeof(frow32_t),
                 ty == KKind::TiledReversed ? "R" : "L",
                 Ltile,

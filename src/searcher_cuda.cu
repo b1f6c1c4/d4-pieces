@@ -116,11 +116,11 @@ void CudaSearcher::search_GPU() {
                 break;
 
             if (sep && last)
-                std::cerr << std::format("\33[{}F", last);
+                std::print(std::cerr, "\33[{}F", last);
             last = sorter.print_stats();
             for (auto &dev : devs)
                 last += dev->print_stats();
-            std::cerr << std::format("\33[37mheight = {}\33[K\33[0m\33[E\33[J\n\n", height);
+            std::print(std::cerr, "\33[37mheight = {}\33[K\33[0m\33[E\33[J\n\n", height);
             last += 3;
         }
     } };

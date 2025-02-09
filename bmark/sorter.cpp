@@ -4,7 +4,6 @@
 #include <random>
 #include <mutex>
 #include <mimalloc-new-delete.h>
-#include <print>
 #include <iostream>
 
 #include "../src/util.hpp"
@@ -74,9 +73,9 @@ int main(int argc, char *argv[]) {
     auto t2 = std::chrono::steady_clock::now();
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
     if (us < 1000)
-        std::cout << std::format("  => completed in {}us\n", us);
+        std::print("  => completed in {}us\n", us);
     else if (us < 1000000)
-        std::cout << std::format("  => completed in {:.2f}ms\n", us / 1e3);
+        std::print("  => completed in {:.2f}ms\n", us / 1e3);
     else
-        std::cout << std::format("  => completed in {:.2f}s\n", us / 1e6);
+        std::print("  => completed in {:.2f}s\n", us / 1e6);
 }

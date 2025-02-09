@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
     std::uniform_int_distribution dist{ 0, 254 };
     std::uniform_int_distribution xdist{ 0, 8 };
     std::poisson_distribution ndist{ 9.0 };
-    std::cout << std::format("generating {} questions\n", sz);
+    std::print("generating {} questions\n", sz);
     for (auto i = 0; i < sz; i++) {
         auto n = ndist(rnd);
         n = std::min(n, max_n);
@@ -78,12 +78,12 @@ int main(int argc, char *argv[]) {
         for (auto k = 0; k < 8; k++)
             h_arr[i].ns[k] = k < x ? dist(rnd) : 0xff;
         if (sz < 50) {
-            std::cout << std::format("h_arr[{}] = {{", i);
+            std::print("h_arr[{}] = {{", i);
             for (auto k = 0; k < 4; k++)
-                std::cout << std::format(" 0x{:08x}", h_arr[i].ex[k]);
-            std::cout << std::format(" }}");
-            std::cout << std::format(" + 0x{:08x}", h_arr[i].n[0]);
-            std::cout << std::format(" + 0x{:08x}\n", h_arr[i].n[1]);
+                std::print(" 0x{:08x}", h_arr[i].ex[k]);
+            std::print(" }}");
+            std::print(" + 0x{:08x}", h_arr[i].n[0]);
+            std::print(" + 0x{:08x}\n", h_arr[i].n[1]);
         }
     }
     blk_t *d_arr;
@@ -95,29 +95,29 @@ int main(int argc, char *argv[]) {
         auto t2 = std::chrono::steady_clock::now();
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
         if (us < 1000)
-            std::cout << std::format("  => cpmpleted in {}us\n", us);
+            std::print("  => cpmpleted in {}us\n", us);
         else if (us < 1000000)
-            std::cout << std::format("  => cpmpleted in {:.2f}ms\n", us / 1e3);
+            std::print("  => cpmpleted in {:.2f}ms\n", us / 1e3);
         else
-            std::cout << std::format("  => cpmpleted in {:.2f}s\n", us / 1e6);
+            std::print("  => cpmpleted in {:.2f}s\n", us / 1e6);
     C(cudaMemcpy(h_arr, d_arr, sz * sizeof(blk_t), cudaMemcpyDeviceToHost));
-    std::cout << std::format("validating {} questions\n", sz);
+    std::print("validating {} questions\n", sz);
     for (auto i = 0; i < sz; i++) {
         auto uniq = true;
         for (auto k = 1; k < 16; k++)
             if (h_arr[i].nms[k] != 0xff && h_arr[i].nms[k - 1] == h_arr[i].nms[k])
                 uniq = false;
         if (uniq != (233 != h_arr[i].cnt) || !std::ranges::is_sorted(h_arr[i].nms) || sz < 50) {
-            std::cout << std::format("h_arr[{}] = {{", i);
+            std::print("h_arr[{}] = {{", i);
             for (auto k = 0; k < 4; k++)
-                std::cout << std::format(" 0x{:08x}", h_arr[i].ex[k]);
-            std::cout << std::format(" }} {:3}", h_arr[i].cnt);
+                std::print(" 0x{:08x}", h_arr[i].ex[k]);
+            std::print(" }} {:3}", h_arr[i].cnt);
         }
         if (uniq != (233 != h_arr[i].cnt))
-            std::cout << std::format("  uniq: {} vs {}", uniq, (233 != h_arr[i].cnt));
+            std::print("  uniq: {} vs {}", uniq, (233 != h_arr[i].cnt));
         if (!std::ranges::is_sorted(h_arr[i].nms))
-            std::cout << std::format("  WRONG!!!\n");
+            std::print("  WRONG!!!\n");
         else if (sz < 50)
-            std::cout << std::format("\n");
+            std::print("\n");
     }
 }

@@ -230,7 +230,7 @@ int main(int argc, char *argv[]) {
     std::uniform_int_distribution dist{ 0, 50 };
     std::poisson_distribution ndist{ 3.0 };
     std::bernoulli_distribution sdist{ 0.1 };
-    std::cout << std::format("generating {} questions\n", N_NEWS);
+    std::print("generating {} questions\n", N_NEWS);
     for (auto i = 0; i < N_NEWS; i++) {
         auto spoiled = false;
         unsigned used_v{};
@@ -263,14 +263,14 @@ int main(int argc, char *argv[]) {
 
     auto verify = [](uint32_t *answer, uint32_t n_answer) {
         if (n_answer != non_spoiled_cnt) {
-            std::cout << std::format("answer count wrong: {} != {}\n", n_answer, non_spoiled_cnt);
+            std::print("answer count wrong: {} != {}\n", n_answer, non_spoiled_cnt);
             return;
         } else {
-            std::cout << std::format("answer count correct: {}/{}\n", non_spoiled_cnt, N_NEWS);
+            std::print("answer count correct: {}/{}\n", non_spoiled_cnt, N_NEWS);
         }
         for (auto i = 0; i < n_answer; i++) {
             if (answer[i] != truth[i])
-                std::cout << std::format("answer[0x{:05x}] wrong: 0x{:08x} != 0x{:08x}\n", i, answer[i], truth[i]);
+                std::print("answer[0x{:05x}] wrong: 0x{:08x} != 0x{:08x}\n", i, answer[i], truth[i]);
         }
     };
 
@@ -279,14 +279,14 @@ int main(int argc, char *argv[]) {
     uint32_t *d_n_out;
     uint32_t h_n_out{};
 
-    std::cout << std::format("copying {:.1f} KiB to GPU\n", 8 * N_NEWS * sizeof(uint32_t) / 1024.0);
+    std::print("copying {:.1f} KiB to GPU\n", 8 * N_NEWS * sizeof(uint32_t) / 1024.0);
     C(cudaMalloc(&d_news, 8 * N_NEWS * sizeof(uint32_t)));
     C(cudaMallocManaged(&m_out, N_NEWS * sizeof(uint32_t)));
     C(cudaMalloc(&d_n_out, sizeof(uint32_t)));
     C(cudaMemcpy(d_news, h_news, 8 * N_NEWS * sizeof(uint32_t), cudaMemcpyHostToDevice));
     C(cudaMemcpy(d_n_out, &h_n_out, sizeof(uint32_t), cudaMemcpyHostToDevice));
 
-    std::cout << std::format("launching kernel <<<{}, {}>>>\n", N_BLK, N_THR);
+    std::print("launching kernel <<<{}, {}>>>\n", N_BLK, N_THR);
     if ("mem"s == argv[1]) {
         if ("t"s == argv[2])
             check_mem<true><<<N_BLK, N_THR>>>(m_out, d_n_out, d_news);
@@ -310,12 +310,12 @@ int main(int argc, char *argv[]) {
     }
     C(cudaPeekAtLastError());
 
-    std::cout << std::format("cudaDeviceSynchronize()\n");
+    std::print("cudaDeviceSynchronize()\n");
     C(cudaDeviceSynchronize());
     C(cudaMemcpy(&h_n_out, d_n_out, sizeof(uint32_t), cudaMemcpyDeviceToHost));
-    std::cout << std::format("sort()\n");
+    std::print("sort()\n");
     std::sort(m_out, m_out + h_n_out);
-    std::cout << std::format("verify()\n");
+    std::print("verify()\n");
     verify(m_out, h_n_out);
 
     C(cudaFree(d_news));

@@ -11,6 +11,8 @@
 #include <thread>
 #include <ranges>
 
+#include "util.hpp"
+
 #define L 8
 
 struct bin_t {

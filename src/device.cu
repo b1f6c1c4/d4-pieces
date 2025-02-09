@@ -45,7 +45,7 @@ void Device::c_entry() {
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), c_stream));
     C(cudaMemsetAsync(n_outs, 0, 2 * sizeof(unsigned long long), c_stream));
 
-    std::cout << std::format("dev#{}.c: allocating {} * {}B = {}B ring buffer\n",
+    std::print("dev#{}.c: allocating {} * {}B = {}B ring buffer\n",
             dev, n_chunks, display(CYC_CHUNK * sizeof(RX)),
             display(n_chunks * CYC_CHUNK * sizeof(RX)));
     C(cudaMallocAsync(&ring_buffer, n_chunks * CYC_CHUNK * sizeof(RX), c_stream));
@@ -78,7 +78,7 @@ again:
         C(cudaEventDestroy(work.ev_m));
         work.ev_m = cudaEvent_t{};
         if (!work.device_accessible()) {
-            std::cout << std::format("dev#{}.c: free up {}B host input mem ({} entries)\n",
+            std::print("dev#{}.c: free up {}B host input mem ({} entries)\n",
                     dev, display(work.len * sizeof(R)), work.len);
             work.dispose();
         }
@@ -93,7 +93,7 @@ again:
         C(err);
         C(cudaEventDestroy(work.ev_c));
         work.ev_c = cudaEvent_t{};
-        std::cout << std::format("dev#{}.c: free up {}B device mem ({} entries)\n",
+        std::print("dev#{}.c: free up {}B device mem ({} entries)\n",
                 dev, display(work.len * sizeof(R)), work.len);
         if (work.device_accessible())
             work.dispose();
@@ -107,7 +107,7 @@ again:
             c_fom_done += work.kp.fom();
             c_actual_done += work.elapsed();
         }
-        std::cout << std::format("dev#{}.c: {}B ({} entries) device mem freed\n",
+        std::print("dev#{}.c: {}B ({} entries) device mem freed\n",
                 dev, display(work.len * sizeof(R)), work.len);
     }
 
@@ -124,7 +124,7 @@ again:
                 work.ptr, (uint8_t)work.pos,
                 d_frowDataL[dev][work.pos >> 0 & 0xfu],
                 d_frowDataR[dev][work.pos >> 4 & 0xfu] };
-            std::cout << std::format(
+            std::print(
                     "dev#{}.c: {:08b}{}\n",
                     dev, work.pos, kpf.to_string(true));
             if (!work.device_accessible()) {
@@ -162,7 +162,7 @@ again:
         n_outs = nullptr;
     }
     lock.lock();
-    std::cout << std::format("dev#{}.c: c thread quitting xc_used={}\n", dev, used);
+    std::print("dev#{}.c: c thread quitting xc_used={}\n", dev, used);
     xc_used = used;
     cv.notify_all();
 }
@@ -241,7 +241,7 @@ again2:
     xm_completed = true;
     cv.notify_all();
     lock.unlock();
-    std::cout << std::format("dev#{}.m: m thread quitting\n", dev);
+    std::print("dev#{}.m: m thread quitting\n", dev);
     C(cudaFree(ring_buffer));
     ring_buffer = nullptr;
     C(cudaFree(counters));
@@ -257,7 +257,7 @@ void Device_callback_helper(void *raw) {
 }
 
 void Device::m_initiate_transfer(uint64_t sz, boost::upgrade_lock<boost::upgrade_mutex> &lock) {
-    std::cout << std::format("dev#{}.m: start {}DtoH chunk #{:0{}}/{} {} ({}B)\n",
+    std::print("dev#{}.m: start {}DtoH chunk #{:0{}}/{} {} ({}B)\n",
             dev, sz == CYC_CHUNK ? "" : "tail ",
             m_scheduled, count_digits(n_chunks),
             n_chunks, sz, display(sz * sizeof(RX)));
@@ -275,7 +275,7 @@ void Device::m_initiate_transfer(uint64_t sz, boost::upgrade_lock<boost::upgrade
 }
 
 void Device::m_callback(Output *pwork) {
-    std::cout << std::format("dev#{}.m: pushing a chunk ({} entries, {}B) to sorter\n",
+    std::print("dev#{}.m: pushing a chunk ({} entries, {}B) to sorter\n",
             dev, pwork->len, display(pwork->len * sizeof(RX)));
     sorter.push(*pwork);
     std::atomic_ref ptr{ pwork->ptr };

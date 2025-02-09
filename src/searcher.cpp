@@ -2,7 +2,6 @@
 #include "searcher_cuda.h"
 
 #include <iostream>
-#include <print>
 #include <chrono>
 
 #include "naming.inl"
@@ -11,6 +10,8 @@
 #include <boost/thread/executors/basic_thread_pool.hpp>
 #include <boost/thread/future.hpp>
 #include <boost/container/small_vector.hpp>
+
+#include "util.hpp"
 
 uint64_t Searcher::step(Shape<8> empty_area) {
     std::print("{}CudaSearcher::CudaSearcher(ea={})\n", empty_area.to_string(), empty_area.size());
