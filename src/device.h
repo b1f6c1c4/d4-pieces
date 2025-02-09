@@ -2,6 +2,8 @@
 
 #include <cuda.h>
 #include <atomic>
+#include <chrono>
+#include <boost/thread/shared_mutex.hpp>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -18,9 +20,15 @@ class Device {
         cudaEvent_t ev_m, ev_c;
         unsigned szid;
         KParams kp;
+        std::chrono::steady_clock::time_point est_start_time; // rough estimate
+
         Input(WL work, int dev, unsigned height);
         Input(const Input &other) = default;
         Input(Input &&other) = default;
+        [[nodiscard]] double elapsed() const {
+            return std::chrono::duration_cast<std::chrono::duration<double>, double, std::ratio<1>>(
+                    std::chrono::steady_clock::now() - est_start_time).count();
+        }
 
         // c:cudaMallocAsync c:cudaFree
         // __device__
@@ -32,38 +40,33 @@ class Device {
     int dev;
     unsigned height;
     Sorter &sorter;
-    std::jthread c_thread, m_thread;
+    std::thread c_thread, m_thread;
 
-    // xc_ready xc_closed xc_pending xm_completed
-    // false   false    0ull      false
-    // true    false    0ull      false
+    // xc_ready xc_closed c_works xm_completed
+    // false      false    empty      false
+    // true       false    empty      false
     // (c: dispatching/freeing) (m: recycling)       (sorter)
-    // true    false    114ull    false
+    // true       false   !empty      false
     //           (Device::close())
-    // true    true     113ull    false
-    // true    true     0ull      false
+    // true       true    !empty      false
+    // true       true     empty      false
     //       (c: exit)       (m: tail recycling)       (sorter)
-    // true    true     0ull      true
+    // true       true     empty      true
     //       (c: exit)         (m: cudaFree())   (sorter: finalizing)
 
-    // synchronization, protected by mtx {
     mutable std::mutex mtx;
-    // cv.notify_all() happens when:
-    // 1. xc_ready = true;
-    // 2. xc_closed = true;
-    // 3. xm_completed = true;
-    // 4. xc_queue.push_back(...);
-    // 5. xc_used.emplace();
+    // protected by mtx {
+    // notifier waiter     condition(s)
+    // c_entry  m/dispatch 1. xc_ready = true;
+    // close    c_entry    2. xc_closed = true;
+    // m_entry  wait       3. xm_completed = true;
+    // dispatch c_entry    4. xc_queue.push_back(...);
+    // c_entry  m_entry    5. xc_used.emplace();
     std::condition_variable cv;
     bool xc_ready{}, xc_closed{}, xm_completed{};
-    uint64_t xc_pending{}; // # kernels
     std::optional<uint64_t> xc_used{}; // final output count
     std::deque<Input> xc_queue{}; // before dispatching
     // }
-
-    // seconds, estimated by KParams::fom()
-    std::atomic<double> c_workload{};
-    std::atomic<double> c_finished{};
 
     // c:cudaMallocAsync m:cudaFree
     // __device__
@@ -81,23 +84,29 @@ class Device {
     // c:cudaMallocAsync c:cudaFree
     unsigned long long *n_outs{}; // __device__
 
-    // internals, only c can access
+    mutable boost::shared_mutex mtx_c; // must not hold mtx
     cudaStream_t c_stream;
+    // protected by mtx_c {
     std::deque<Input> c_works{}; // after dispatching
+    double c_sum_fom{}; // in c_works
+    double c_fom_done{}, c_actual_done{};
+    // } (all r/w must be very short; only c_thread can hold u)
     void c_entry();
 
-    // internals, only m can access
-    unsigned long long m_scheduled{};
+    mutable boost::shared_mutex mtx_m; // must not hold mtx
     cudaStream_t m_stream;
-    mutable std::timed_mutex mtx_m_works; // must not hold mtx
+    // protected by mtx_m {
+    unsigned long long m_scheduled{};
     std::deque<Output *> m_works{};
+    // } (all r/w must be very short; only m_thread can hold u)
     void m_entry();
-    void m_initiate_transfer(uint64_t sz);
+    void m_initiate_transfer(uint64_t sz, boost::upgrade_lock<boost::upgrade_mutex> &lock);
     void m_callback(Output *pwork);
     friend void Device_callback_helper(void *raw);
 
 public:
     Device(int d, unsigned h, Sorter &s);
+    ~Device();
 
     // thread-safe, callable from anywhere
     void dispatch(WL cfgs);
@@ -105,7 +114,7 @@ public:
     void wait(); // both c/m completed
 
     // thread-safe, callable from anywhere
-    uint64_t get_workload() const;
+    double get_etc() const;
 
     // thread-safe, callable from anywhere
     void print_stats() const;

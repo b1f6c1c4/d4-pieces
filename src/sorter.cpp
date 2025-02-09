@@ -149,8 +149,6 @@ std::deque<WL> Sorter::join() {
 
 void Sorter::push(Rg<RX> r) {
     static_assert(N_PAGES * 4096ull % sizeof(RX) == 0, "RX not aligned to N-page boundry");
-    if ((size_t)r.ptr % 4096ull)
-        throw std::runtime_error{ "ptr not aligned to page boundry" };
     std::atomic_ref atm_p{ pending };
     atm_p.fetch_add(r.len, std::memory_order_relaxed);
     auto n = (r.len + N - 1) / N;

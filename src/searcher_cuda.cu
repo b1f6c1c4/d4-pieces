@@ -127,7 +127,7 @@ void CudaSearcher::search_GPU() {
 
     while (!solutions.empty()) {
         std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
-            return dev->get_workload();
+            return dev->get_etc();
         });
         // Device::c is responsible for free up
         devs.front()->dispatch(solutions.front());

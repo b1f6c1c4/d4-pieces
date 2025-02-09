@@ -135,7 +135,7 @@ double KParams::fom() const {
                 blocks, threads,
                 c, e, blocks * 1e-11, v);
 #endif
-        return v;
+        return v + 500e-6;
     }
 
     uint32_t Ltile, Rtile;
@@ -176,5 +176,5 @@ double KParams::fom() const {
             Ltile, nL, Rtile, nR,
             m, c, e, n, v);
 #endif
-    return v;
+    return v + 500e-6;
 }

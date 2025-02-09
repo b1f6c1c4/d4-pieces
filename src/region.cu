@@ -1,30 +1,40 @@
 #include "region.h"
 #include "util.cuh"
 
+#include <atomic>
+
+template <typename T>
+Rg<T>::operator bool() const {
+    std::atomic_ref atm{ ptr };
+    return atm.load(std::memory_order_relaxed);
+}
+
 template <typename T>
 void Rg<T>::dispose() {
     if (!*this)
         return;
+
+    std::atomic_ref atm{ ptr };
 
     switch (ty) {
         case RgType::NONE:
             break;
         case RgType::DELETE:
             delete ptr;
-            ptr = nullptr;
+            atm.store(nullptr, std::memory_order_relaxed);
             break;
         case RgType::CUDA_FREE:
             C(cudaFree(ptr));
-            ptr = nullptr;
+            atm.store(nullptr, std::memory_order_relaxed);
             break;
         case RgType::CUDA_FREE_HOST:
             C(cudaFreeHost(ptr));
-            ptr = nullptr;
+            atm.store(nullptr, std::memory_order_relaxed);
             break;
         case RgType::CUDA_HOST_UNREGISTER_DELETE:
             C(cudaHostUnregister(ptr));
             delete [] ptr;
-            ptr = nullptr;
+            atm.store(nullptr, std::memory_order_relaxed);
             break;
     }
 }
@@ -66,7 +76,8 @@ Rg<T> Rg<T>::make_cuda_mlocked(size_t len, bool direct) {
 
 template void Rg<R>::dispose();
 template void Rg<RX>::dispose();
-
+template Rg<R>::operator bool() const;
+template Rg<RX>::operator bool() const;
 template Rg<R> Rg<R>::make_cpu(size_t len, bool page);
 template Rg<RX> Rg<RX>::make_cpu(size_t len, bool page);
 template Rg<R> Rg<R>::make_managed(size_t len);

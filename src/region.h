@@ -13,13 +13,14 @@ enum class RgType {
 
 template <typename T>
 struct Rg {
-    T *ptr{};
+    T *ptr{}; // atomic dispose/operator bool is supported
+
     unsigned long long len{}; // number of T
 
     RgType ty{ RgType::DELETE };
 
     [[nodiscard]] bool device_accessible() const { return ty != RgType::DELETE; }
-    [[nodiscard]] operator bool() const { return ptr; }
+    [[nodiscard]] operator bool() const;
 
     void dispose(); // len is not changed
 
@@ -36,6 +37,8 @@ static_assert(std::is_trivially_copyable_v<WL>);
 
 extern template void Rg<R>::dispose();
 extern template void Rg<RX>::dispose();
+extern template Rg<R>::operator bool() const;
+extern template Rg<RX>::operator bool() const;
 extern template Rg<R> Rg<R>::make_cpu(size_t len, bool page);
 extern template Rg<RX> Rg<RX>::make_cpu(size_t len, bool page);
 extern template Rg<R> Rg<R>::make_managed(size_t len);
