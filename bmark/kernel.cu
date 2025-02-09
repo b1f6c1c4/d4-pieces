@@ -6,6 +6,8 @@
 
 #include <format>
 #include <iostream>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 
 #include "../src/frow.h"
 #include "../src/kernel.h"
@@ -73,23 +75,10 @@ void launch_fix_cfgs(unsigned H, unsigned long long n_cfgs, cudaStream_t s) {
     }
 }
 
-void show(const KParams &res) {
-    if (res.shmem_len) {
-        std::cout << std::format("<<<{:10},{:5},{:5}B>>>[{}]/{:.02e} => ",
-                res.blocks, res.threads, res.shmem_len * sizeof(frow32_t),
-                res.reverse ? "L" : "R",
-                res.fom());
-    } else {
-        std::cout << std::format("<<<{:10},{:5}>>>  [legacy]/{:.02e} => ",
-                res.blocks, res.threads,
-                res.fom());
-    }
-}
-
 int main(int argc, char *argv[]) {
-    if (argc != 10) {
+    if (argc != 9 && argc != 10) {
         std::cout << std::format(
-                "Usage: {} <min_m> <max_m> <min_n> <max_n> <board_n> <ea> <height> <n_cfgs> <n_pars>\n",
+                "Usage: {} <min_m> <max_m> <min_n> <max_n> <board_n> <ea> <height> <n_cfgs> [<n_pars>]\n",
                 argv[0]);
         return 1;
     }
@@ -103,15 +92,18 @@ int main(int argc, char *argv[]) {
     auto ea = (uint8_t)std::strtol(argv[6], nullptr, 16);
     auto height = (unsigned)std::atoi(argv[7]);
     auto n_cfgs = (uint64_t)std::atoll(argv[8]);
-    auto n_pars = std::atoi(argv[9]);
+    auto n_pars{ -1 };
+    if (argc == 10)
+        n_pars = std::atoi(argv[9]);
     g_nme.emplace(
-        (uint64_t)min_m, (uint64_t)max_m,
-        (uint64_t)min_n, (uint64_t)max_n,
-        board_n,
-        sym_C ? known_C_shapes : known_shapes,
-        sym_C ? shapes_C_count : shapes_count);
+            (uint64_t)min_m, (uint64_t)max_m,
+            (uint64_t)min_n, (uint64_t)max_n,
+            board_n,
+            sym_C ? known_C_shapes : known_shapes,
+            sym_C ? shapes_C_count : shapes_count);
 
-    show_gpu_devices();
+    if (n_pars >= 0)
+        show_gpu_devices();
     compute_frow_on_cpu();
 
     auto szid = std::min(height - 1, 5u);
@@ -150,55 +142,15 @@ int main(int argc, char *argv[]) {
     unsigned long long *n_outs;
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), stream));
 
-    C(cuProfilerStart());
-    auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
-    for (auto it = pars.rbegin(); it != pars.rend(); it++)
-        (void)it->fom();
-    if (pars.size() > n_pars)
-        pars.erase(pars.begin() + n_pars, pars.end());
-    // pars.push_back(KParams{
-    //         KSizing{ n_cfgs, fanoutL, fanoutR },
-    //         false,
-    //         84*2,
-    //         768,
-    //         50176 / sizeof(frow32_t)
-    //         });
-    // pars.push_back(KParams{
-    //         KSizing{ n_cfgs, fanoutL, fanoutR },
-    //         false,
-    //         1344,
-    //         1,
-    //         50176 / sizeof(frow32_t)
-    //         });
-    // pars.push_back(KParams{
-    //         KSizing{ n_cfgs, fanoutL, fanoutR },
-    //         false,
-    //         1,
-    //         768,
-    //         50176 / sizeof(frow32_t)
-    //         });
-    // pars.push_back(KParams{
-    //         KSizing{ n_cfgs, fanoutL, fanoutR },
-    //         true,
-    //         84*3,
-    //         512,
-    //         32768 / sizeof(frow32_t)
-    //         });
-    // pars.push_back(KParams{
-    //         KSizing{ n_cfgs, fanoutL, fanoutR },
-    //         false,
-    //         (n_cfgs * fanoutL * fanoutR + 768 - 1) / 768,
-    //         768,
-    //         0,
-    //         });
-    for (auto &res : pars) {
+    auto launch = [&](const KParams &kp) {
         unsigned long long tmp{};
         C(cudaMemcpyAsync(n_outs, &tmp,
                     sizeof(unsigned long long), cudaMemcpyHostToDevice, stream));
-        show(res);
+        std::cout << kp.to_string(false) << " => ";
+        std::cout.flush();
         std::cout.flush();
 
-        KParamsFull kpf{ res, height,
+        KParamsFull kpf{ kp, height,
             ring_buffer, n_outs, N_CHUNKS,
             nullptr, nullptr, cfgs, ea, f0L, f0R };
         cudaEvent_t start, stop;
@@ -216,6 +168,85 @@ int main(int argc, char *argv[]) {
         std::cout << std::format("{} / {:.08f}ms\n", tmp, ms);
         C(cudaEventDestroy(start));
         C(cudaEventDestroy(stop));
+    };
+
+    KParams kp{ KSizing{ n_cfgs, fanoutL, fanoutR } };
+    while (n_pars == -1) {
+        std::cout << R"(<KParams> ::=)" << "\n";
+        std::cout << R"(    | "legacy" <threads> [<blocks>])" << "\n";
+        std::cout << R"(    | ("L"|"R") <threads> [<blocks> [<shmem>]])" << "\n";
+        std::cout << "> ";
+        std::cout.flush();
+        std::vector<std::string> tokens;
+        std::string line;
+        std::getline(std::cin, line);
+        boost::split(tokens, line, boost::is_any_of(" "));
+        if (std::cin.eof())
+            break;
+        if (tokens.empty() || tokens.size() > 4) {
+            std::cout << "invalid <KParams>\n";
+            continue;
+        }
+        if (tokens[0] == "legacy") {
+            if (tokens.size() < 2) {
+                std::cout << "invalid <KParams>\n";
+                continue;
+            }
+            kp = KParams{ KSizing{ n_cfgs, fanoutL, fanoutR } };
+            kp.threads = std::stoull(tokens[1]);
+            if (tokens.size() < 3)
+                kp.blocks = (n_cfgs * fanoutL * fanoutR + kp.threads - 1) / kp.threads;
+            else
+                kp.blocks = std::stoull(tokens[2]);
+        } else if (tokens[0] == "L" || tokens[0] == "R") {
+            if (tokens.size() < 2) {
+                std::cout << "invalid <KParams>\n";
+                continue;
+            }
+            kp = KParams{ KSizing{ n_cfgs, fanoutL, fanoutR } };
+            if (tokens[0] == "L")
+                kp.reverse = true;
+            kp.threads = std::stoull(tokens[1]);
+            if (tokens.size() < 3) {
+                kp.blocks = (n_cfgs + kp.threads - 1) / kp.threads;
+            } else {
+                kp.blocks = std::stoull(tokens[2]);
+            }
+            if (tokens.size() < 4) {
+                if (kp.threads <= 96)
+                    kp.shmem_len = 7168 / sizeof(frow32_t);
+                else if (kp.threads <= 128)
+                    kp.shmem_len = 11776 / sizeof(frow32_t);
+                else if (kp.threads <= 256)
+                    kp.shmem_len = 15872 / sizeof(frow32_t);
+                else if (kp.threads <= 384)
+                    kp.shmem_len = 24576 / sizeof(frow32_t);
+                else if (kp.threads <= 512)
+                    kp.shmem_len = 32768 / sizeof(frow32_t);
+                else if (kp.threads <= 768)
+                    kp.shmem_len = 50176 / sizeof(frow32_t);
+                else
+                    kp.shmem_len = 101376 / sizeof(frow32_t);
+            } else {
+                kp.shmem_len = std::stoll(tokens[3]) / sizeof(frow32_t);
+            }
+        } else if (tokens[0] == "launch") {
+            launch(kp);
+            continue;
+        }
+        std::cout << kp.to_string(true) << "\n";
+    }
+
+    if (n_pars >= 0) {
+        C(cuProfilerStart());
+        auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
+        for (auto it = pars.rbegin(); it != pars.rend(); it++)
+            (void)it->fom();
+        if (pars.size() > n_pars)
+            pars.erase(pars.begin() + n_pars, pars.end());
+        for (auto &res : pars) {
+            launch(res);
+        }
     }
 
     C(cudaStreamDestroy(stream));

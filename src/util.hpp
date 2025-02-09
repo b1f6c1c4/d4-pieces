@@ -17,7 +17,9 @@ inline std::string display(T byte) {
 }
 
 inline std::string display(double s) {
-    if (s < 0)
+    if (s == 0.0)
+        return "0s";
+    if (s < 0.0)
         return "-" + display(-s);
     if (s < 1e-9)
         return std::format("<1ns");

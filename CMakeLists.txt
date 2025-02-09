@@ -43,7 +43,7 @@ if(EMSCRIPTEN)
     target_link_options(profile PRIVATE -sENVIRONMENT=shell)
     target_link_options(profile PRIVATE -sMODULARIZE=0)
 else()
-    # set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
     add_executable(search
         src/search.cpp
         src/searcher.cpp
@@ -67,7 +67,6 @@ else()
     target_compile_options(search PRIVATE -O3 -march=native)
     target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-g>)
     target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-g -lineinfo>)
-    target_compile_options(search PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>)
     set_target_properties(search PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
     set_target_properties(search PROPERTIES CUDA_ARCHITECTURES "86")
 

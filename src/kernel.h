@@ -2,6 +2,7 @@
 
 #include <cuda.h>
 #include <cstdint>
+#include <string>
 #include "frow.h"
 #include "record.h"
 
@@ -18,8 +19,9 @@ struct KSizing {
 #ifdef BMARK
     [[nodiscard]] std::vector<KParams> optimize() const;
 #else
-    [[nodiscard]] KParams optimize() const;
+    [[nodiscard]] KParams optimize(bool debug = false) const;
 #endif
+    [[nodiscard]] std::string to_string() const;
 };
 
 struct KParams : KSizing {
@@ -29,6 +31,7 @@ struct KParams : KSizing {
     unsigned shmem_len;
 
     [[nodiscard]] double fom() const;
+    [[nodiscard]] std::string to_string(bool full) const;
 };
 
 struct KParamsFull : KParams {

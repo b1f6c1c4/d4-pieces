@@ -119,7 +119,7 @@ void CudaSearcher::search_GPU() {
                 std::cerr << std::format("\33[{}F", last);
             last = sorter.print_stats();
             for (auto &dev : devs)
-                dev->print_stats(), last++;
+                last += dev->print_stats();
             std::cerr << std::format("\33[37mheight = {}\33[K\33[0m\33[E\33[J\n\n", height);
             last += 3;
         }
@@ -129,6 +129,9 @@ void CudaSearcher::search_GPU() {
         std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
             return dev->get_etc();
         });
+        for (auto &dev : devs)
+            if (!dev)
+                throw std::runtime_error{ "worst nightmare" };
         // Device::c is responsible for free up
         devs.front()->dispatch(solutions.front());
         solutions.pop_front();

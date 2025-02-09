@@ -33,7 +33,6 @@ struct CudaSearcher {
 
 private:
     std::deque<WL> solutions;
-    Device *devs;
 
     uint32_t height; // maximum hight stored in solutions
 

@@ -3,12 +3,11 @@
 #include <algorithm>
 #include <ranges>
 #include <vector>
-#ifdef BMARK
 #include <format>
 #include <iostream>
-#endif
 
 #include "util.cuh"
+#include "util.hpp"
 
 template <unsigned H, int>
 __global__
@@ -86,7 +85,7 @@ static unsigned known_shmem_b[]{ 5120, 7168, 11776, 15872, 24576, 32768, 50176, 
 #ifdef BMARK
 std::vector<KParams> KSizing::optimize() const {
 #else
-KParams KSizing::optimize() const {
+KParams KSizing::optimize(bool debug) const {
 #endif
     std::vector<KParams> pars;
     auto n = n_cfgs * f0Lsz * f0Rsz;
@@ -119,8 +118,31 @@ KParams KSizing::optimize() const {
 #ifdef BMARK
     return pars;
 #else
+    if (debug) {
+        std::cout << std::format("kernel#optimize: best kernel params for {} are:\n",
+                to_string());
+        for (auto i = 0zu; i < pars.size() && i < 10zu; i++)
+            std::cout << std::format("      #{}\n", pars[i].to_string(false));
+    }
     return pars.front();
 #endif
+}
+
+std::string KSizing::to_string() const {
+    return std::format("[{:<6}*L{:<5}*R{:<5}]", n_cfgs, f0Lsz, f0Rsz);
+}
+
+std::string KParams::to_string(bool full) const {
+    std::string s;
+    if (!shmem_len)
+        s = std::format("<<<{:11},{:5}>>>[legacy]", blocks, threads);
+    else
+        s = std::format("<<<{:9},{:5},{:6}>>>[{}]", blocks, threads,
+                shmem_len * sizeof(frow32_t), reverse ? 'L' : 'R');
+    if (full)
+        s += KSizing::to_string();
+    s += std::format(" ~ {}", display(fom()));
+    return s;
 }
 
 double KParams::fom() const {
@@ -162,7 +184,7 @@ double KParams::fom() const {
     auto mem = 1.2e-4;
     auto m = nL * (4e-3 + Ltile * mem); // load Lcache
     if (nR == 1) // load Rcache
-        m += (1e-1 + Rtile * mem);
+        m += (4e-3 + Rtile * mem);
     else
         m += nL * nR * (4e-3 + Rtile * mem);
 
@@ -170,10 +192,14 @@ double KParams::fom() const {
     auto n = n_cfgs * 2.3e-5; // load cfgs
     auto v = e * (m + c) + n;
 #ifdef BMARK
-    std::cout << std::format("<<<{:10},{:5},{:5}B>>>[{}] L{}/{} R{}/{} ({:9.2f} +{:9.2f})*{:3}+{:9.2f}={:9.2f}\n",
+    std::cout << std::format("<<<{:9},{:5},{:6}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f})*{:3}+{:9.2f}={:9.2f}\n",
             blocks, threads, shmem_len * sizeof(frow32_t),
+            reverse ? "R" : "L",
+            Ltile,
+            nL,
             reverse ? "L" : "R",
-            Ltile, nL, Rtile, nR,
+            Rtile,
+            nR,
             m, c, e, n, v);
 #endif
     return v + 500e-6;

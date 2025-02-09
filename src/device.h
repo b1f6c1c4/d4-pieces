@@ -91,6 +91,7 @@ class Device {
     double c_sum_fom{}; // in c_works
     double c_fom_done{}, c_actual_done{};
     // } (all r/w must be very short; only c_thread can hold u)
+    std::atomic<double> c_fom_queued{};
     void c_entry();
 
     mutable boost::shared_mutex mtx_m; // must not hold mtx
@@ -117,5 +118,5 @@ public:
     double get_etc() const;
 
     // thread-safe, callable from anywhere
-    void print_stats() const;
+    unsigned print_stats() const;
 };

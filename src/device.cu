@@ -14,7 +14,7 @@ using namespace std::chrono_literals;
 Device::Input::Input(WL work, int dev, unsigned height)
     : WL{ work }, szid{ min(height - 1, 5) }, kp{ KSizing{ len,
         h_frowInfoL[pos >> 0 & 0b1111u].sz[szid],
-        h_frowInfoR[pos >> 4 & 0b1111u].sz[szid] }.optimize() },
+        h_frowInfoR[pos >> 4 & 0b1111u].sz[szid] }.optimize(true) },
       p{} { }
 
 Device::Device(int d, unsigned h, Sorter &s)
@@ -114,7 +114,7 @@ again:
 
     // launch kernels
     lock.lock();
-    while (!xc_queue.empty()) {
+    if (!xc_queue.empty()) { // make sure not to issue too many
         auto work = std::move(xc_queue.front());
         xc_queue.pop_front();
         lock.unlock();
@@ -126,11 +126,11 @@ again:
                 d_frowDataL[dev][work.pos >> 0 & 0xfu],
                 d_frowDataR[dev][work.pos >> 4 & 0xfu] };
             std::cout << std::format(
-                    "dev#{}.c: {:08b}<<<{:8},{:4},{:5}B>>>[{}] = {:<6}*L{:<5}*R{:<5} ~ {:.2f}s\n",
+                    "dev#{}.c: {:08b}<<<{:8},{:4},{:5}B>>>[{}] = {:<6}*L{:<5}*R{:<5} ~ {}\n",
                     dev, work.pos,
                     kpf.blocks, kpf.threads, kpf.shmem_len * sizeof(frow32_t),
-                    kpf.shmem_len ? "-" : kpf.reverse ? "L" : "R",
-                    kpf.n_cfgs, kpf.f0Lsz, kpf.f0Rsz, kpf.fom());
+                    !kpf.shmem_len ? "-" : kpf.reverse ? "L" : "R",
+                    kpf.n_cfgs, kpf.f0Lsz, kpf.f0Rsz, display(kpf.fom()));
             if (!work.device_accessible()) {
                 C(cudaMallocAsync(&work.p, work.len * sizeof(R), c_stream));
                 C(cudaMemcpyAsync(work.p, work.ptr, work.len * sizeof(R),
@@ -292,8 +292,7 @@ void Device::dispatch(WL cfgs) {
     std::unique_lock lock{ mtx };
     cv.wait(lock, [this]{ return xc_ready; });
     auto &work = xc_queue.emplace_back(cfgs, dev, height);
-    // TODO
-    // c_workload += work.kp.fom();
+    c_fom_queued.fetch_add(work.kp.fom(), std::memory_order_relaxed);
     cv.notify_all();
 }
 
@@ -315,13 +314,15 @@ double Device::get_etc() const {
 
     auto &work = c_works.front();
     auto el = work.elapsed();
-    return c_sum_fom - std::min(work.kp.fom(), el);
+    auto q = c_fom_queued.load(std::memory_order_relaxed);
+    return q + c_sum_fom - std::min(work.kp.fom(), el);
 }
 
-void Device::print_stats() const {
+unsigned Device::print_stats() const {
     cuda::atomic_ref n_reader_chunk{ counters[0] };
     cuda::atomic_ref n_writer_chunk{ counters[1] };
 
+    auto lines = 1u;
     std::stringstream ss;
     ss << "\33[37mdev" << dev << " [";
 
@@ -357,25 +358,29 @@ void Device::print_stats() const {
         ss << "\33[37m] ";
 
         boost::shared_lock lock_c_works{ mtx_c };
-        ss << std::format("[E{} A{}]",
+        ss << std::format("[E{:7} A{:7}]",
                 display(c_fom_done), display(c_actual_done));
-        if (!c_works.empty()) {
-            auto e = c_works.front().elapsed();
-            auto f = c_works.front().kp.fom();
-            ss << std::format(" [{}/{}] ETC {}", display(e), display(f),
-                    display(c_sum_fom - std::min(e, f)));
-        }
-        lock_c_works.unlock();
+        ss << std::format(" ETC{:7}", display(get_etc()));
 
         lock.lock();
         if (!xc_queue.empty())
-            ss << std::format("+Q{:d}", xc_queue.size());
+            ss << std::format(" Q{:d}", xc_queue.size());
         if (xc_closed)
             ss << " closed";
+
+        if (!c_works.empty()) {
+            auto &work = c_works.front();
+            lines++;
+            ss << std::format("\33[K\n\33[37mdev#{} {:08b}{}/{:7}]",
+                        dev, work.pos, work.kp.to_string(true), display(work.elapsed()));
+            if (c_works.size() >= 1)
+                ss << " + W" << c_works.size() - 1;
+        }
     }
     lock.unlock();
     ss << "\33[K\33[0m\n";
     std::cerr << ss.str();
+    return lines;
 }
 
 Device::~Device() {
