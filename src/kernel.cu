@@ -13,9 +13,9 @@ template <unsigned H, int>
 __global__
 void legacy_row_search(unsigned, K_PARAMS);
 
-template <unsigned H, bool Reverse>
+template <unsigned H, int W, bool Reverse>
 __global__
-__launch_bounds__(768, 2)
+__launch_bounds__(W, 1536 / W)
 void LR_row_search(unsigned shmem_len, K_PARAMS);
 
 extern template __global__ void legacy_row_search<8, 0>(unsigned, K_PARAMS);
@@ -26,22 +26,41 @@ extern template __global__ void legacy_row_search<4, 0>(unsigned, K_PARAMS);
 extern template __global__ void legacy_row_search<3, 0>(unsigned, K_PARAMS);
 extern template __global__ void legacy_row_search<2, 0>(unsigned, K_PARAMS);
 extern template __global__ void legacy_row_search<1, 0>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<8, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<7, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<6, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<5, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<4, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<3, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<2, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<1, true>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<8, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<7, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<6, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<5, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<4, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<3, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<2, false>(unsigned, K_PARAMS);
-extern template __global__ void LR_row_search<1, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<8, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<7, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<6, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<5, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<4, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<3, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<2, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<1, 768, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<8, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<7, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<6, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<5, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<4, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<3, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<2, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<1, 768, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<8, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<7, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<6, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<5, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<4, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<3, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<2, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<1, 1024, true>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<8, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<7, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<6, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<5, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<4, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<3, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<2, 1024, false>(unsigned, K_PARAMS);
+extern template __global__ void LR_row_search<1, 1024, false>(unsigned, K_PARAMS);
+
+#define COMMA ,
+#define CCMMA ,
 
 void KParamsFull::launch(cudaStream_t stream) {
 #define ARGS \
@@ -64,19 +83,32 @@ void KParamsFull::launch(cudaStream_t stream) {
     } while (false)
 
     if (!shmem_len) L(legacy_row_search, 0);
-    else if (reverse) L(LR_row_search, true);
-    else L(LR_row_search, false);
+    else if (threads > 768)
+        if (reverse) L(LR_row_search, 1024 COMMA true);
+        else L(LR_row_search, 1024 COMMA false);
+    else
+        if (reverse) L(LR_row_search, 768 COMMA true);
+        else L(LR_row_search, 768 COMMA false);
 }
 
 void prepare_kernels() {
-#define S(k) \
-    C(cudaFuncSetAttribute(k, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared)); \
-    C(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, 50176));
-#define COMMA ,
-#define SS(k, t) S(k<8 COMMA t>) S(k<7 COMMA t>) S(k<6 COMMA t>) S(k<5 COMMA t>) S(k<4 COMMA t>) S(k<3 COMMA t>) S(k<2 COMMA t>) S(k<1 COMMA t>)
+#define S(...) \
+    C(cudaFuncSetAttribute(__VA_ARGS__, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared)); \
+    C(cudaFuncSetAttribute(__VA_ARGS__, cudaFuncAttributeMaxDynamicSharedMemorySize, 101376));
+#define SS(k, ...) \
+    S(k<8 COMMA __VA_ARGS__>) \
+    S(k<7 COMMA __VA_ARGS__>) \
+    S(k<6 COMMA __VA_ARGS__>) \
+    S(k<5 COMMA __VA_ARGS__>) \
+    S(k<4 COMMA __VA_ARGS__>) \
+    S(k<3 COMMA __VA_ARGS__>) \
+    S(k<2 COMMA __VA_ARGS__>) \
+    S(k<1 COMMA __VA_ARGS__>)
     SS(legacy_row_search, 0)
-    SS(LR_row_search, true)
-    SS(LR_row_search, false)
+    SS(LR_row_search, 768  COMMA true)
+    SS(LR_row_search, 768  COMMA false)
+    SS(LR_row_search, 1024 COMMA true)
+    SS(LR_row_search, 1024 COMMA false)
 }
 
 static unsigned known_t[]{ 96, 128, 192, 256, 384, 512, 768, 1024 };
@@ -96,7 +128,7 @@ KParams KSizing::optimize(bool debug) const {
         if ((n + t - 1) / t <= 2147483647ull)
             pars.emplace_back(*this, false, (n + t - 1) / t, t, 0);
     auto wpn = (n_cfgs + 31) / 32;
-    for (auto i = 0; i < 7; i++) { // 1024 disabled
+    for (auto i = 0; i < 8; i++) {
         for (auto b = 1ull; b <= wpn && b <= 2147483647ull; b <<= 1) {
             pars.emplace_back(*this, false, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
             pars.emplace_back(*this, true, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
@@ -145,17 +177,24 @@ std::string KParams::to_string(bool full) const {
     return s;
 }
 
+#ifdef BMARK
+double KParams::fom(bool debug) const {
+#else
 double KParams::fom() const {
+#endif
     auto oc = std::min(16u, 1536u / threads) * 84; // max blocks per device
+    auto util = 1536.0 / ((1536u / threads) * threads);
     auto e = ((blocks + oc - 1) / oc);
 
     if (shmem_len == 0) {
         auto c = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 1.63e-6;
         auto v = e * c + blocks * 1e-11;
 #ifdef BMARK
-        std::cout << std::format("<<<{:10},{:5}>>>  [legacy] {:9.2e}*{:3} + {:9.2f} ={:9.2f}\n",
-                blocks, threads,
-                c, e, blocks * 1e-11, v);
+        if (debug) {
+            std::cout << std::format("<<<{:10},{:5}>>>  [legacy] {:9.2e}*{:3} + {:9.2f} ={:9.2f}\n",
+                    blocks, threads,
+                    c, e, blocks * 1e-11, v);
+        }
 #endif
         return v + 500e-6;
     }
@@ -190,17 +229,19 @@ double KParams::fom() const {
 
     auto c = nL * nR * Ltile * Rtile * iterations * 7.2e-8; // compute
     auto n = n_cfgs * 2.3e-5; // load cfgs
-    auto v = e * (m + c) + n;
+    auto v = e * (m + c * util) + n;
 #ifdef BMARK
-    std::cout << std::format("<<<{:9},{:5},{:6}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f})*{:3}+{:9.2f}={:9.2f}\n",
-            blocks, threads, shmem_len * sizeof(frow32_t),
-            reverse ? "R" : "L",
-            Ltile,
-            nL,
-            reverse ? "L" : "R",
-            Rtile,
-            nR,
-            m, c, e, n, v);
+    if (debug) {
+        std::cout << std::format("<<<{:9},{:5},{:6}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f}*{})*{:3}+{:9.2f}={:9.2f}\n",
+                blocks, threads, shmem_len * sizeof(frow32_t),
+                reverse ? "R" : "L",
+                Ltile,
+                nL,
+                reverse ? "L" : "R",
+                Rtile,
+                nR,
+                m, c, util, e, n, v);
+    }
 #endif
     return v + 500e-6;
 }

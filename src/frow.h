@@ -7,7 +7,7 @@
 
 // g_nme and g_sym must be set
 // required before calling Searcher::Searcher
-void compute_frow_on_cpu();
+void compute_frow_on_cpu(bool show_report = true);
 void transfer_frow_to_gpu();
 void show_gpu_devices();
 

@@ -61,9 +61,9 @@ void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
 // N is always coalesced
 // L is tiled/coalesced and cached at shmem
 // R is tiled/coalesced and cached at shmem
-template <unsigned H, bool Reverse>
+template <unsigned H, int W, bool Reverse>
 __global__
-__launch_bounds__(768, 2)
+__launch_bounds__(W, 1536 / W)
 void LR_row_search(unsigned shmem_len, K_PARAMS) {
     extern __shared__ frow32_t shmem[/* shmem_len */];
 
@@ -157,19 +157,35 @@ template __global__ void legacy_row_search<4, 0>(unsigned, K_PARAMS);
 template __global__ void legacy_row_search<3, 0>(unsigned, K_PARAMS);
 template __global__ void legacy_row_search<2, 0>(unsigned, K_PARAMS);
 template __global__ void legacy_row_search<1, 0>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<8, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<7, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<6, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<5, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<4, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<3, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<2, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<1, true>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<8, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<7, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<6, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<5, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<4, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<3, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<2, false>(unsigned, K_PARAMS);
-template __global__ void LR_row_search<1, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<8, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<7, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<6, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<5, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<4, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<3, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<2, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<1, 768, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<8, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<7, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<6, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<5, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<4, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<3, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<2, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<1, 768, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<8, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<7, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<6, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<5, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<4, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<3, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<2, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<1, 1024, true>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<8, 1024, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<7, 1024, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<6, 1024, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<5, 1024, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<4, 1024, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<3, 1024, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<2, 1024, false>(unsigned, K_PARAMS);
+template __global__ void LR_row_search<1, 1024, false>(unsigned, K_PARAMS);

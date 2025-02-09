@@ -36,7 +36,7 @@ std::strong_ordering operator<=>(const frow_t &l, const frow_t &r) {
     return std::strong_ordering::equal;
 }
 
-void compute_frow_on_cpu() {
+void compute_frow_on_cpu(bool show_report) {
     using nm_t = decltype(tt_t::nm);
     auto count = 0zu;
     std::array<std::vector<tt_t>, 64> fanout;
@@ -131,7 +131,8 @@ void compute_frow_on_cpu() {
             fi.sz[i] = std::ranges::upper_bound(f,
                     (1ull << (8 * i + 8)) - 1ull, std::less{}, &frow_t::shape) - f.begin();
             total_sz[i] += fi.sz[i];
-            std::print("/{}", fi.sz[i]);
+            if (show_report)
+                std::print("/{}", fi.sz[i]);
         }
         if (fi.sz[5] != f.size())
             throw std::runtime_error{ "internal error" };
@@ -139,19 +140,20 @@ void compute_frow_on_cpu() {
     };
     for (auto ea = 0u; ea < 16u; ea++) {
         std::set<frow_t> f;
-        std::print("[0b1111{:04b}] => L", ea);
+        if (show_report)
+            std::print("[0b1111{:04b}] => L", ea);
         invest(ea | ~0b00001111ull, 0b00001111ull, ea | ~0b00001111ull, f);
         h_frowInfoL[ea] = regularize(frowL[ea], f);
-        std::print("\n");
+        if (show_report)
+            std::print("\n");
     }
     for (auto ea = 0u; ea < 16u; ea++) {
         std::set<frow_t> f;
-        std::print("[0b{:04b}0000] => R", ea);
+        if (show_report)
+            std::print("[0b{:04b}0000] => R", ea);
         invest((ea << 4) | ~0b11111111ull, 0b11110000ull, (ea << 4) | ~0b11111111ull, f);
         h_frowInfoR[ea] = regularize(frowR[ea], f);
-        std::print("\n");
+        if (show_report)
+            std::print("\n");
     }
-    for (auto i = 0; i < 6; i++)
-        std::print("sz[{}] = {} = {}KiB\n", i, total_sz[i],
-                total_sz[i] * sizeof(frow_t) / 1024.0);
 }

@@ -30,7 +30,11 @@ struct KParams : KSizing {
     uint32_t threads;
     unsigned shmem_len;
 
+#ifdef BMARK
+    double fom(bool debug = false) const;
+#else
     [[nodiscard]] double fom() const;
+#endif
     [[nodiscard]] std::string to_string(bool full) const;
 };
 

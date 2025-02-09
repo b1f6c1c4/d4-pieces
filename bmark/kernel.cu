@@ -3,6 +3,10 @@
 #include <curand.h>
 #include <cuda_profiler_api.h>
 #include <cudaProfiler.h>
+#include <cstdio>
+#include <csignal>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #include <format>
 #include <iostream>
@@ -75,7 +79,110 @@ void launch_fix_cfgs(unsigned H, unsigned long long n_cfgs, cudaStream_t s) {
     }
 }
 
+static KSizing ks;
+
+int default_blocks(bool is_legacy, int threads) {
+    if (is_legacy)
+        return (ks.n_cfgs * ks.f0Lsz * ks.f0Rsz + threads - 1) / threads;
+    else
+        return (ks.n_cfgs + threads - 1) / threads;
+}
+
+int default_shmem(int threads) {
+    if (threads <= 96)
+        return 7168;
+    else if (threads <= 128)
+        return 11776;
+    else if (threads <= 256)
+        return 15872;
+    else if (threads <= 384)
+        return 24576;
+    else if (threads <= 512)
+        return 32768;
+    else if (threads <= 768)
+        return 50176;
+    else
+        return 101376;
+}
+
+static bool running = false;
+
+using namespace std::string_literals;
+// ChatGPT generated code, fixed 114514 bugs {{{
+static const std::vector<std::string> THREADS{"32", "64", "96", "128", "192", "256", "384", "512", "768", "1024"};
+
+// Readline completion function
+char *command_generator(const char *text, int state) {
+    static std::vector<std::string> matches;
+    static size_t index;
+
+    if (state == 0) {
+        matches.clear();
+        index = 0;
+
+        std::vector<std::string> tokens;
+        boost::split(tokens, rl_line_buffer, boost::is_any_of(" "), boost::token_compress_on);
+
+        // Determine position in the input
+        size_t pos = tokens.size();
+        bool is_legacy = !tokens.empty() && tokens[0] == "legacy";
+
+        if (pos == 1) {
+            if ("legacy"s.starts_with(text)) matches.push_back("legacy");
+            if ("L"s.starts_with(text)) matches.push_back("L");
+            if ("R"s.starts_with(text)) matches.push_back("R");
+        } else if (pos == 2) {
+            // Complete <threads>
+            for (const std::string &thread : THREADS) {
+                if (thread.starts_with(text))
+                    matches.push_back(thread);
+            }
+        } else if (pos == 3) {
+            // Complete <blocks> (computed from `default_blocks`)
+            int threads = std::stoi(tokens[1]);
+            int blocks = default_blocks(is_legacy, threads);
+            matches.push_back(std::to_string(blocks));
+        } else if (pos == 4 && !is_legacy) {
+            // Complete <shmem> (computed from `default_shmem`)
+            int threads = std::stoi(tokens[1]);
+            int shmem = default_shmem(threads);
+            matches.push_back(std::to_string(shmem));
+        }
+    }
+
+    // Return next match
+    if (index < matches.size()) {
+        return strdup(matches[index++].c_str());
+    }
+    return nullptr;
+}
+
+// Readline wrapper function
+char **custom_completer(const char *text, int , int ) {
+    return rl_completion_matches(text, command_generator);
+}
+
+void handle_sigint(int sig) {
+    if (running)
+        exit(1);
+    // Clear the current input line when Ctrl-C is pressed
+    printf("\n");  // Move to a new line
+    rl_on_new_line();  // Reset readline's internal state
+    rl_replace_line("", 0);  // Clear the input buffer
+    rl_redisplay();  // Refresh the prompt
+}
+
+// }}} ChatGPT generated code
+
 int main(int argc, char *argv[]) {
+    rl_attempted_completion_function = custom_completer;
+    rl_variable_bind("show-all-if-ambiguous", "on");
+    struct sigaction sa;
+    sa.sa_handler = handle_sigint;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+
     if (argc != 9 && argc != 10) {
         std::cout << std::format(
                 "Usage: {} <min_m> <max_m> <min_n> <max_n> <board_n> <ea> <height> <n_cfgs> [<n_pars>]\n",
@@ -104,7 +211,7 @@ int main(int argc, char *argv[]) {
 
     if (n_pars >= 0)
         show_gpu_devices();
-    compute_frow_on_cpu();
+    compute_frow_on_cpu(n_pars >= 0);
 
     auto szid = std::min(height - 1, 5u);
     auto fanoutL = h_frowInfoL[(ea >> 0) & 0xfu].sz[szid];
@@ -143,10 +250,11 @@ int main(int argc, char *argv[]) {
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), stream));
 
     auto launch = [&](const KParams &kp) {
+        running = true;
         unsigned long long tmp{};
         C(cudaMemcpyAsync(n_outs, &tmp,
                     sizeof(unsigned long long), cudaMemcpyHostToDevice, stream));
-        std::cout << kp.to_string(false) << " => ";
+        std::cout << kp.to_string(true) << " => ";
         std::cout.flush();
         std::cout.flush();
 
@@ -168,82 +276,66 @@ int main(int argc, char *argv[]) {
         std::cout << std::format("{} / {:.08f}ms\n", tmp, ms);
         C(cudaEventDestroy(start));
         C(cudaEventDestroy(stop));
+        running = false;
     };
 
-    KParams kp{ KSizing{ n_cfgs, fanoutL, fanoutR } };
+    ks = KSizing{ n_cfgs, fanoutL, fanoutR };
+    KParams kp{ ks };
+    std::cout << R"(<KParams> ::=)" << "\n";
+    std::cout << R"(    | "legacy" <threads> [<blocks>])" << "\n";
+    std::cout << R"(    | ("L"|"R") <threads> [<blocks> [<shmem>]])" << "\n";
     while (n_pars == -1) {
-        std::cout << R"(<KParams> ::=)" << "\n";
-        std::cout << R"(    | "legacy" <threads> [<blocks>])" << "\n";
-        std::cout << R"(    | ("L"|"R") <threads> [<blocks> [<shmem>]])" << "\n";
-        std::cout << "> ";
-        std::cout.flush();
-        std::vector<std::string> tokens;
-        std::string line;
-        std::getline(std::cin, line);
-        boost::split(tokens, line, boost::is_any_of(" "));
-        if (std::cin.eof())
+        auto input = readline("> ");
+        if (input == nullptr)
             break;
-        if (tokens.empty() || tokens.size() > 4) {
+
+        std::vector<std::string> tokens;
+        std::string line{ input };
+        free(input);
+        boost::split(tokens, line, boost::is_any_of(" "), boost::token_compress_on);
+        if (!tokens.empty() && tokens.back().empty())
+            tokens.pop_back();
+        if (tokens.size() < 2 || tokens.size() > 4) {
             std::cout << "invalid <KParams>\n";
             continue;
         }
         if (tokens[0] == "legacy") {
-            if (tokens.size() < 2) {
-                std::cout << "invalid <KParams>\n";
-                continue;
-            }
-            kp = KParams{ KSizing{ n_cfgs, fanoutL, fanoutR } };
+            kp = KParams{ ks };
             kp.threads = std::stoull(tokens[1]);
             if (tokens.size() < 3)
-                kp.blocks = (n_cfgs * fanoutL * fanoutR + kp.threads - 1) / kp.threads;
+                kp.blocks = default_blocks(true, kp.threads);
             else
                 kp.blocks = std::stoull(tokens[2]);
         } else if (tokens[0] == "L" || tokens[0] == "R") {
-            if (tokens.size() < 2) {
-                std::cout << "invalid <KParams>\n";
-                continue;
-            }
-            kp = KParams{ KSizing{ n_cfgs, fanoutL, fanoutR } };
+            kp = KParams{ ks };
             if (tokens[0] == "L")
                 kp.reverse = true;
             kp.threads = std::stoull(tokens[1]);
             if (tokens.size() < 3) {
-                kp.blocks = (n_cfgs + kp.threads - 1) / kp.threads;
+                kp.blocks = default_blocks(false, kp.threads);
             } else {
                 kp.blocks = std::stoull(tokens[2]);
             }
             if (tokens.size() < 4) {
-                if (kp.threads <= 96)
-                    kp.shmem_len = 7168 / sizeof(frow32_t);
-                else if (kp.threads <= 128)
-                    kp.shmem_len = 11776 / sizeof(frow32_t);
-                else if (kp.threads <= 256)
-                    kp.shmem_len = 15872 / sizeof(frow32_t);
-                else if (kp.threads <= 384)
-                    kp.shmem_len = 24576 / sizeof(frow32_t);
-                else if (kp.threads <= 512)
-                    kp.shmem_len = 32768 / sizeof(frow32_t);
-                else if (kp.threads <= 768)
-                    kp.shmem_len = 50176 / sizeof(frow32_t);
-                else
-                    kp.shmem_len = 101376 / sizeof(frow32_t);
+                kp.shmem_len = default_shmem(kp.threads) / sizeof(frow32_t);
             } else {
                 kp.shmem_len = std::stoll(tokens[3]) / sizeof(frow32_t);
             }
-        } else if (tokens[0] == "launch") {
-            launch(kp);
+        } else {
             continue;
         }
-        std::cout << kp.to_string(true) << "\n";
+        add_history(line.c_str());
+        kp.fom(true);
+        launch(kp);
     }
 
     if (n_pars >= 0) {
         C(cuProfilerStart());
-        auto pars = KSizing{ n_cfgs, fanoutL, fanoutR }.optimize();
-        for (auto it = pars.rbegin(); it != pars.rend(); it++)
-            (void)it->fom();
+        auto pars = ks.optimize();
         if (pars.size() > n_pars)
             pars.erase(pars.begin() + n_pars, pars.end());
+        for (auto it = pars.rbegin(); it != pars.rend(); it++)
+            it->fom(true);
         for (auto &res : pars) {
             launch(res);
         }
