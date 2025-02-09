@@ -30,16 +30,23 @@ struct frow32_t {
     operator frow_t() const;
 };
 
-struct frow_info_t {
-    frow_t *data;
+// for easier GPU access
+struct frow_info_d {
+    // Array of Structures (AoS)
     frow32_t *data32;
+    // Structure of Arrays (SoA)
+    uint32_t *dataL, *dataH, *data0123;
+};
+
+struct frow_info_t : frow_info_d {
+    frow_t *data;
     uint32_t sz[6];
 };
 
 // defined in frow.cu
 extern int n_devices;
 extern frow_info_t h_frowInfoL[16], h_frowInfoR[16]; // defined in frow.cpp
-extern frow32_t *d_frowDataL[128][16], *d_frowDataR[128][16];
+extern frow_info_d d_frowDataL[128][16], d_frowDataR[128][16];
 #ifdef __CUDA_ARCH__
 extern CUcontext cuda_ctxs[128];
 #endif

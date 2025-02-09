@@ -2,31 +2,31 @@
 #include "util.cuh"
 
 int n_devices;
-CUcontext cuda_ctxs[128];
-frow32_t *d_frowDataL[128][16], *d_frowDataR[128][16];
+frow_info_d d_frowDataL[128][16], d_frowDataR[128][16];
 
 void transfer_frow_to_gpu() {
     C(cudaGetDeviceCount(&n_devices));
     n_devices = min(n_devices, 128);
-    std::cout << std::format("n_devices = {}\n", n_devices);
     if (!n_devices)
         throw std::runtime_error{ "no CUDA device" };
 
     for (auto d = 0; d < n_devices; d++) {
         C(cudaSetDevice(d));
-        C(cudaSetDeviceFlags(cudaDeviceScheduleYield));
         for (auto i = 0; i < 16; i++) {
-            C(cudaMalloc(&d_frowDataL[d][i], h_frowInfoL[i].sz[5] * sizeof(frow_t)));
-            C(cudaMalloc(&d_frowDataR[d][i], h_frowInfoR[i].sz[5] * sizeof(frow_t)));
-            C(cudaMemcpyAsync(d_frowDataL[d][i], h_frowInfoL[i].data32,
-                        h_frowInfoL[i].sz[5] * sizeof(frow32_t), cudaMemcpyHostToDevice));
-            C(cudaMemcpyAsync(d_frowDataR[d][i], h_frowInfoR[i].data32,
-                        h_frowInfoR[i].sz[5] * sizeof(frow32_t), cudaMemcpyHostToDevice));
+#define CP(X, ty, field) \
+            C(cudaMalloc(&d_frowData ## X[d][i].field, h_frowInfo ## X[i].sz[5] * sizeof(ty))); \
+            C(cudaMemcpyAsync(d_frowData ## X[d][i].field, h_frowInfo ## X[i].field, \
+                        h_frowInfo ## X[i].sz[5] * sizeof(ty), cudaMemcpyHostToDevice));
+            CP(L, frow32_t, data32)
+            CP(L, uint32_t, dataL)
+            CP(L, uint32_t, dataH)
+            CP(L, uint32_t, data0123)
+            CP(R, frow32_t, data32)
+            CP(R, uint32_t, dataL)
+            CP(R, uint32_t, dataH)
+            CP(R, uint32_t, data0123)
+#undef CP
         }
-        C(cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, ~0ull));
-        size_t drplc;
-        C(cudaDeviceGetLimit(&drplc, cudaLimitDevRuntimePendingLaunchCount));
-        std::cout << std::format("dev{}.DRPLC = {}\n", d, drplc);
     }
     for (auto d = 0; d < n_devices; d++) {
         C(cudaSetDevice(d));

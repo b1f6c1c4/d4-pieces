@@ -51,11 +51,11 @@ void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
     auto d = reinterpret_cast<uint32_t *>(dst);
     auto s = reinterpret_cast<const uint32_t *>(src);
     for (auto i = threadIdx.x; i < sizeof(frow32_t) / sizeof(uint32_t) * sz; i += blockDim.x) {
-        // __pipeline_memcpy_async(d + i, s + i, 4, 0);
-        d[i] = s[i];
+        __pipeline_memcpy_async(d + i, s + i, 4, 0);
+        // d[i] = s[i];
     }
-    // __pipeline_commit();
-    // __pipeline_wait_prior(0);
+    __pipeline_commit();
+    __pipeline_wait_prior(0);
 }
 
 // N is always coalesced
@@ -81,11 +81,11 @@ void tiled_row_search(unsigned shmem_len, K_PARAMS) {
 
 #define CACHE(X) do { \
         BEFORE(lr); \
-        cache_frow(X ## cache, f0 ## X + X ## offset, X ## sz); \
+        cache_frow(X ## cache, f0 ## X.data32 + X ## offset, X ## sz); \
         AFTER(lr); \
     } while (false)
 
-    const frow32_t *f0Y, *f0X;
+    frow_info_d f0Y, f0X;
     uint32_t f0Ysz, f0Xsz;
     if constexpr (Reverse) {
         f0Y = f0R, f0Ysz = f0Rsz;
@@ -200,43 +200,29 @@ void linear_row_search(unsigned, K_PARAMS) {
     auto tpb = static_cast<uint64_t>(blockDim.x);
     auto idx = threadIdx.x + tpb * blockIdx.x;
 
-    R r;
     frow_t fL, fR;
+    if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
+    BEFORE(n);
+    auto r = cfgs[idx / f0Rsz / f0Lsz];
+    AFTER(n);
+
     if constexpr (Coalesced == 0) { // N - L - R
-        if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
-        BEFORE(n);
-        r = cfgs[idx / f0Rsz / f0Lsz];
-        AFTER(n);
         BEFORE(lr);
-        fL = f0L[idx / f0Rsz % f0Lsz];
-        fR = f0R[idx % f0Rsz];
+        fL = f0L.data32[idx / f0Rsz % f0Lsz];
+        fR = f0R.data32[idx % f0Rsz];
         AFTER(lr);
-    } else if constexpr (Coalesced == +1) { // N - L - R/blockDim.x
-        extern __shared__ frow32_t Rcache[/* blockDim.x */];
-        auto bpRsz = (f0Rsz + tpb - 1) / tpb;
-        auto Rsz = (blockIdx.x % bpRsz == bpRsz - 1) ? (f0Rsz % tpb) : tpb;
-        BEFORE(n);
-        r = cfgs[blockIdx.x / bpRsz / f0Lsz];
-        AFTER(n);
+    } else if constexpr (Coalesced == +1) { // N - L - R
+        auto i = idx % f0Rsz;
         BEFORE(lr);
-        fL = f0L[blockIdx.x / bpRsz % f0Lsz];
-        cache_frow(Rcache, f0R + blockIdx.x % bpRsz * tpb, Rsz);
-        __syncthreads();
+        fL = f0L.data32[idx / f0Rsz % f0Lsz];
+        fR = frow32_t{ f0R.dataL[i], f0R.dataH[i], f0R.data0123[i] };
         AFTER(lr);
-        fR = Rcache[threadIdx.x];
-    } else if constexpr (Coalesced == -1) { // N - R - L/blockDim.x
-        extern __shared__ frow32_t Lcache[/* blockDim.x */];
-        auto bpLsz = (f0Lsz + tpb - 1) / tpb;
-        auto Lsz = (blockIdx.x % bpLsz == bpLsz - 1) ? (f0Lsz % tpb) : tpb;
-        BEFORE(n);
-        r = cfgs[blockIdx.x / bpLsz / f0Rsz];
-        AFTER(n);
+    } else if constexpr (Coalesced == -1) { // N - R - L
+        auto i = idx % f0Lsz;
         BEFORE(lr);
-        fR = f0R[blockIdx.x / bpLsz % f0Rsz];
-        cache_frow(Lcache, f0L + blockIdx.x % bpLsz * tpb, Lsz);
-        __syncthreads();
+        fR = f0R.data32[idx / f0Lsz % f0Rsz];
+        fL = frow32_t{ f0L.dataL[i], f0L.dataH[i], f0L.data0123[i] };
         AFTER(lr);
-        fL = Lcache[threadIdx.x];
     }
 
     BEFORE(tile);

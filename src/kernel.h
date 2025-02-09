@@ -27,9 +27,8 @@ struct KSizing {
 enum class KKind {
     // shmem_len == 0
     Legacy,        // b*t >= n_cfgs * f0Lsz * f0Rsz
-    // shmem_len == (12*threads) B
-    CoalescedR,    // b*t >= n_cfgs * f0Lsz * ceil(f0Rsz/threads)
-    CoalescedL,    // b*t >= n_cfgs * ceil(f0Lsz/threads) * f0Rsz
+    CoalescedR,    // b*t >= n_cfgs * f0Lsz * f0Rsz
+    CoalescedL,    // b*t >= n_cfgs * f0Lsz * f0Rsz
     // shmem_len == several KiB
     TiledStandard, // b*t >= n_cfgs
     TiledReversed, // b*t >= n_cfgs; not recommended
@@ -62,8 +61,8 @@ struct KParamsFull : KParams {
 
     uint8_t ea;
 
-    const frow32_t *f0L;
-    const frow32_t *f0R;
+    const frow_info_d f0L;
+    const frow_info_d f0R;
 
 #ifdef BMARK
     unsigned long long *perf;
@@ -94,5 +93,5 @@ void prepare_kernels(); // must be called before KParamsFull::launch
         const R *cfgs, const uint64_t n_cfgs, \
         /* constants */ \
         uint8_t ea, \
-        const frow32_t *f0L, uint32_t f0Lsz, \
-        const frow32_t *f0R, uint32_t f0Rsz K_PARAMS_PROF
+        const frow_info_d f0L, uint32_t f0Lsz, \
+        const frow_info_d f0R, uint32_t f0Rsz K_PARAMS_PROF

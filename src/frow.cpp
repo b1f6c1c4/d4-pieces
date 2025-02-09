@@ -125,8 +125,15 @@ void compute_frow_on_cpu(bool show_report) {
             f.emplace_back(ff);
         fi.data = f.data();
         fi.data32 = new frow32_t[f.size()];
-        for (auto i = 0zu; i < f.size(); i++)
+        fi.dataL = new uint32_t[f.size()];
+        fi.dataH = new uint32_t[f.size()];
+        fi.data0123 = new uint32_t[f.size()];
+        for (auto i = 0zu; i < f.size(); i++) {
             fi.data32[i] = fi.data[i];
+            fi.dataL[i] = fi.data32[i].shapeL;
+            fi.dataH[i] = fi.data32[i].shapeH;
+            fi.data0123[i] = fi.data32[i].nm0123;
+        }
         for (auto i = 0; i < 6; i++) {
             fi.sz[i] = std::ranges::upper_bound(f,
                     (1ull << (8 * i + 8)) - 1ull, std::less{}, &frow_t::shape) - f.begin();

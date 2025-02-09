@@ -237,14 +237,34 @@ int main(int argc, char *argv[]) {
     cudaStream_t stream;
     C(cudaStreamCreate(&stream));
 
-    frow32_t *f0L, *f0R;
+    // for unknown reason, accessing d_frowDataX gives invalid memory access
+    // transfer_frow_to_gpu();
+    frow_info_d f0L, f0R;
     std::cout << std::format("copy f0L({}), f0R({}) at szid={}\n", fanoutL, fanoutR, szid);
-    C(cudaMallocAsync(&f0L, fanoutL*sizeof(frow32_t), stream));
-    C(cudaMallocAsync(&f0R, fanoutR*sizeof(frow32_t), stream));
-    C(cudaMemcpyAsync(f0L, h_frowInfoL[(ea >> 0) & 0xfu].data32,
+    C(cudaMallocAsync(&f0L.data32, fanoutL*sizeof(frow32_t), stream));
+    C(cudaMallocAsync(&f0R.data32, fanoutR*sizeof(frow32_t), stream));
+    C(cudaMemcpyAsync(f0L.data32, h_frowInfoL[(ea >> 0) & 0xfu].data32,
                 fanoutL*sizeof(frow32_t), cudaMemcpyHostToDevice, stream));
-    C(cudaMemcpyAsync(f0R, h_frowInfoR[(ea >> 0) & 0xfu].data32,
+    C(cudaMemcpyAsync(f0R.data32, h_frowInfoR[(ea >> 4) & 0xfu].data32,
                 fanoutR*sizeof(frow32_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMallocAsync(&f0L.dataL, fanoutL*sizeof(uint32_t), stream));
+    C(cudaMallocAsync(&f0R.dataL, fanoutR*sizeof(uint32_t), stream));
+    C(cudaMemcpyAsync(f0L.dataL, h_frowInfoL[(ea >> 0) & 0xfu].dataL,
+                fanoutL*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMemcpyAsync(f0R.dataL, h_frowInfoR[(ea >> 4) & 0xfu].dataL,
+                fanoutR*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMallocAsync(&f0L.dataH, fanoutL*sizeof(uint32_t), stream));
+    C(cudaMallocAsync(&f0R.dataH, fanoutR*sizeof(uint32_t), stream));
+    C(cudaMemcpyAsync(f0L.dataH, h_frowInfoL[(ea >> 0) & 0xfu].dataH,
+                fanoutL*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMemcpyAsync(f0R.dataH, h_frowInfoR[(ea >> 4) & 0xfu].dataH,
+                fanoutR*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMallocAsync(&f0L.data0123, fanoutL*sizeof(uint32_t), stream));
+    C(cudaMallocAsync(&f0R.data0123, fanoutR*sizeof(uint32_t), stream));
+    C(cudaMemcpyAsync(f0L.data0123, h_frowInfoL[(ea >> 0) & 0xfu].data0123,
+                fanoutL*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
+    C(cudaMemcpyAsync(f0R.data0123, h_frowInfoR[(ea >> 4) & 0xfu].data0123,
+                fanoutR*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
 
     std::cout << std::format("allocate {} cfgs\n", n_cfgs);
     C(cudaMallocManaged(&cfgs, n_cfgs*sizeof(R)));
@@ -283,7 +303,10 @@ int main(int argc, char *argv[]) {
 
         KParamsFull kpf{ kp, height,
             ring_buffer, n_outs, N_CHUNKS,
-            nullptr, nullptr, cfgs, ea, f0L, f0R, perf };
+            nullptr, nullptr, cfgs, ea,
+            f0L, // d_frowDataL[0][ea >> 0 & 0xfu],
+            f0R, // d_frowDataR[0][ea >> 4 & 0xfu],
+            perf };
         cudaEvent_t start, stop;
         C(cudaEventCreate(&start));
         C(cudaEventCreate(&stop));

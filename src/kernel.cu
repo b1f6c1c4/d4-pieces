@@ -109,10 +109,10 @@ void KParamsFull::launch(cudaStream_t stream) {
             L(0, linear_row_search, 0);
             break;
         case KKind::CoalescedR:
-            L(threads, linear_row_search, +1);
+            L(0, linear_row_search, +1);
             break;
         case KKind::CoalescedL:
-            L(threads, linear_row_search, -1);
+            L(0, linear_row_search, -1);
             break;
         case KKind::TiledStandard:
             if (threads > 768)
@@ -145,8 +145,8 @@ void prepare_kernels() {
     S(sz, k<2 COMMA __VA_ARGS__>) \
     S(sz, k<1 COMMA __VA_ARGS__>)
     SS(0, linear_row_search, 0)
-    SS(1024 * sizeof(frow32_t), linear_row_search, +1)
-    SS(1024 * sizeof(frow32_t), linear_row_search, -1)
+    SS(0, linear_row_search, +1)
+    SS(0, linear_row_search, -1)
     SS(101376, tiled_row_search, 768  COMMA true)
     SS(101376, tiled_row_search, 768  COMMA false)
     SS(101376, tiled_row_search, 1024 COMMA true)
