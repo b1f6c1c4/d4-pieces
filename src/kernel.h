@@ -54,6 +54,10 @@ struct KParamsFull : KParams {
     const frow32_t *f0L;
     const frow32_t *f0R;
 
+#ifdef BMARK
+    unsigned long long *perf;
+#endif
+
     void launch(cudaStream_t stream);
 };
 
@@ -67,6 +71,12 @@ void prepare_kernels(); // must be called before KParamsFull::launch
         unsigned long long *n_reader_chunk, /* __managed__, HtoD */ \
         unsigned long long *n_writer_chunk /* __managed__, DtoH */ \
 
+#ifdef BMARK
+#define K_PARAMS_PROF , unsigned long long *perf
+#else
+#define K_PARAMS_PROF
+#endif
+
 #define K_PARAMS \
         K_PARAMS_OUT, \
         /* input vector */ \
@@ -74,4 +84,4 @@ void prepare_kernels(); // must be called before KParamsFull::launch
         /* constants */ \
         uint8_t ea, \
         const frow32_t *f0L, uint32_t f0Lsz, \
-        const frow32_t *f0R, uint32_t f0Rsz
+        const frow32_t *f0R, uint32_t f0Rsz K_PARAMS_PROF

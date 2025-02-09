@@ -65,72 +65,117 @@ template <unsigned H, int W, bool Reverse>
 __global__
 __launch_bounds__(W, 1536 / W)
 void LR_row_search(unsigned shmem_len, K_PARAMS) {
-    extern __shared__ frow32_t shmem[/* shmem_len */];
-
-    if constexpr (Reverse) {
-        auto t = f0Lsz;
-        f0Lsz = f0Rsz;
-        f0Rsz = t;
-        auto tt = f0L;
-        f0L = f0R;
-        f0R = tt;
-    }
-
-    uint32_t Ltile, Rtile;
-    if (f0Lsz + f0Rsz <= shmem_len) {
-        Ltile = f0Lsz, Rtile = f0Rsz;
-    } else if (f0Lsz < shmem_len / 2) {
-        Ltile = f0Lsz, Rtile = shmem_len - f0Lsz;
-    } else if (f0Rsz < shmem_len / 2) {
-        Ltile = shmem_len - f0Rsz, Rtile = f0Rsz;
-    } else {
-        Ltile = shmem_len / 2, Rtile = shmem_len - Ltile;
-    }
-    auto *Lcache = shmem;
-    auto *Rcache = shmem + Ltile;
 
     auto tpb = static_cast<uint64_t>(blockDim.x);
     auto tpg = static_cast<uint64_t>(gridDim.x) * tpb;
     if (tpb * blockIdx.x >= n_cfgs) // this block shouldn't even exist!
         return;
 
-    if (f0Rsz <= Rtile)
-        cache_frow(Rcache, f0R, f0Rsz);
+#ifdef BMARK
+    long long perf_lr{}, perf_n{}, perf_tile{}, perf_comp{};
+#define BEFORE(X) perf_ ## X -= clock64()
+#define AFTER(X)  perf_ ## X += clock64()
+#else
+#define BEFORE(X)
+#define AFTER(X)
+#endif
 
-    for (auto Loffset = 0u; Loffset < f0Lsz; Loffset += Ltile) {
-        auto Lsz = min(Ltile, f0Lsz - Loffset);
-        cache_frow(Lcache, f0L + Loffset, Lsz);
-        if (f0Rsz < Rtile)
+#define CACHE(X) do { \
+        BEFORE(lr); \
+        cache_frow(X ## cache, f0 ## X + X ## offset, X ## sz); \
+        AFTER(lr); \
+    } while (false)
+
+    const frow32_t *f0Y, *f0X;
+    uint32_t f0Ysz, f0Xsz;
+    if constexpr (Reverse) {
+        f0Y = f0R, f0Ysz = f0Rsz;
+        f0X = f0L, f0Xsz = f0Lsz;
+    } else {
+        f0Y = f0L, f0Ysz = f0Lsz;
+        f0X = f0R, f0Xsz = f0Rsz;
+    }
+
+    uint32_t Ytile, Xtile;
+    if (f0Ysz + f0Xsz <= shmem_len) {
+        Ytile = f0Ysz, Xtile = f0Xsz;
+    } else if (f0Ysz < shmem_len / 2) {
+        Ytile = f0Ysz, Xtile = shmem_len - f0Ysz;
+    } else if (f0Xsz < shmem_len / 2) {
+        Ytile = shmem_len - f0Xsz, Xtile = f0Xsz;
+    } else {
+        Ytile = shmem_len / 2, Xtile = shmem_len - Ytile;
+    }
+    extern __shared__ frow32_t shmem[/* shmem_len */];
+    auto *Ycache = shmem;
+    auto *Xcache = shmem + Ytile;
+
+    const frow32_t *Lcache;
+    const frow32_t *Rcache;
+    if constexpr (Reverse) {
+        Lcache = Xcache, Rcache = Ycache;
+    } else {
+        Lcache = Ycache, Rcache = Xcache;
+    }
+
+    if (f0Xsz <= Xtile) {
+        auto Xoffset = 0u;
+        auto Xsz = f0Xsz;
+        CACHE(X);
+    }
+
+    for (auto Yoffset = 0u; Yoffset < f0Ysz; Yoffset += Ytile) {
+        auto Ysz = min(Ytile, f0Ysz - Yoffset);
+        CACHE(Y);
+        if (f0Xsz < Xtile)
             __syncthreads();
 
-        for (auto Roffset = 0u; Roffset < f0Rsz; Roffset += Rtile) {
-            auto Rsz = min(Rtile, f0Rsz - Roffset);
-            if (f0Rsz > Rtile) {
-                cache_frow(Rcache, f0R + Roffset, Rsz);
+        for (auto Xoffset = 0u; Xoffset < f0Xsz; Xoffset += Xtile) {
+            auto Xsz = min(Xtile, f0Xsz - Xoffset);
+            if (f0Xsz > Xtile) {
+                CACHE(X);
                 __syncthreads();
             }
 
             auto idx = threadIdx.x + tpb * blockIdx.x;
             for (auto k = idx; k < n_cfgs; k += tpg) {
+                BEFORE(n);
                 auto cfg = parse_R<H>(cfgs[k], ea);
+                AFTER(n);
 
-                for (auto l = 0u; l < Lsz; l++) {
-                    frow_t fL = Lcache[l];
-                    if (fL.shape & ~cfg.empty_area) [[unlikely]] continue;
+                BEFORE(tile);
+                const auto &Lsz = Reverse ? Xsz : Ysz;
+                const auto &Rsz = Reverse ? Ysz : Xsz;
+                // profiling showed that ALWAYS put (actual) f0R as outer loop in a tile
+                for (auto r = 0u; r < Rsz; r++) {
+                    frow_t fR = Rcache[r];
+                    if (fR.shape & ~cfg.empty_area) [[unlikely]] continue;
 
-                    for (auto r = 0u; r < Rsz; r++) {
-                        frow_t fR = Rcache[r];
-                        if (fR.shape & ~cfg.empty_area) [[unlikely]] continue;
+                    for (auto l = 0u; l < Lsz; l++) {
+                        frow_t fL = Lcache[l];
+                        if (fL.shape & ~cfg.empty_area) [[unlikely]] continue;
                         if (fR.shape & fL.shape) [[unlikely]] continue;
 
-                        impl<H>(cfg, Reverse ? fR : fL, Reverse ? fL : fR,
+                        BEFORE(comp);
+                        impl<H>(cfg, fL, fR,
                             ring_buffer, n_outs, n_chunks,
                             n_reader_chunk, n_writer_chunk);
+                        AFTER(comp);
                     }
                 }
+                AFTER(tile);
             }
         }
     }
+
+    __nv_atomic_fetch_add(&perf[0], perf_lr,
+            __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
+    __nv_atomic_fetch_add(&perf[1], perf_n,
+            __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
+    __nv_atomic_fetch_add(&perf[2], perf_tile,
+            __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
+    __nv_atomic_fetch_add(&perf[3], perf_comp,
+            __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
 }
 
 template <unsigned H, int>

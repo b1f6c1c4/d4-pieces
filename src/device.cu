@@ -43,8 +43,7 @@ void Device::c_entry() {
     C(cudaStreamCreateWithFlags(&c_stream, cudaStreamNonBlocking));
 
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), c_stream));
-    unsigned long long zero{};
-    C(cudaMemcpyAsync(n_outs, &zero, sizeof(zero), cudaMemcpyHostToDevice, c_stream));
+    C(cudaMemsetAsync(n_outs, 0, 2 * sizeof(unsigned long long), c_stream));
 
     std::cout << std::format("dev#{}.c: allocating {} * {}B = {}B ring buffer\n",
             dev, n_chunks, display(CYC_CHUNK * sizeof(RX)),

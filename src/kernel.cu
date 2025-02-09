@@ -1,6 +1,7 @@
 #include "kernel.h"
 
 #include <algorithm>
+#include <cmath>
 #include <ranges>
 #include <vector>
 #include <format>
@@ -63,12 +64,17 @@ extern template __global__ void LR_row_search<1, 1024, false>(unsigned, K_PARAMS
 #define CCMMA ,
 
 void KParamsFull::launch(cudaStream_t stream) {
+#ifdef BMARK
+#define ARGS_EX , perf
+#else
+#define ARGS_EX
+#endif
 #define ARGS \
     shmem_len, \
     ring_buffer, n_outs, n_chunks, \
     n_reader_chunk, n_writer_chunk, \
     cfgs, n_cfgs, \
-    ea, f0L, f0Lsz, f0R, f0Rsz
+    ea, f0L, f0Lsz, f0R, f0Rsz ARGS_EX
 
 #define L(k, t) \
     do { if (height == 8) k<8, t><<<blocks, threads, shmem_len * sizeof(frow32_t), stream>>>(ARGS); \
@@ -196,7 +202,7 @@ double KParams::fom() const {
                     c, e, blocks * 1e-11, v);
         }
 #endif
-        return v + 500e-6;
+        return v; // + 500e-6;
     }
 
     uint32_t Ltile, Rtile;
@@ -220,15 +226,19 @@ double KParams::fom() const {
     auto tpg = static_cast<uint64_t>(blocks) * tpb;
     auto iterations = (n_cfgs + tpg - 1) / tpg;
 
-    auto mem = 1.2e-4;
-    auto m = nL * (4e-3 + Ltile * mem); // load Lcache
+    auto m = 1.0 * nL * Ltile; // load Lcache
     if (nR == 1) // load Rcache
-        m += (4e-3 + Rtile * mem);
+        m += Rtile;
     else
-        m += nL * nR * (4e-3 + Rtile * mem);
+        m += Rtile * nL * nR * 0.8;
+    if ((Ltile + Rtile) * sizeof(frow32_t) >= 48 * 1024ull) // beyond 48K penalty
+        m += 0.58 * ((Ltile + Rtile) * sizeof(frow32_t) - 48 * 1024ull);
+    m *= 5e-4 * std::min(16u, 1536u / threads); // per block
 
-    auto c = nL * nR * Ltile * Rtile * iterations * 7.2e-8; // compute
-    auto n = n_cfgs * 2.3e-5; // load cfgs
+    auto c = nL * nR * Ltile * Rtile * iterations * 7.2e-200; // compute
+
+    auto n = n_cfgs * 1.5e-5 * ::pow(nL * nR, 0.87); // load cfgs
+
     auto v = e * (m + c * util) + n;
 #ifdef BMARK
     if (debug) {
@@ -243,5 +253,5 @@ double KParams::fom() const {
                 m, c, util, e, n, v);
     }
 #endif
-    return v + 500e-6;
+    return v * 1e-6; // + 500e-6;
 }

@@ -5,6 +5,8 @@
 #include <cudaProfiler.h>
 #include <cstdio>
 #include <csignal>
+#include <iomanip>
+#include <unistd.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
@@ -12,6 +14,8 @@
 #include <iostream>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
+#include <boost/iostreams/device/file_descriptor.hpp>
+#include <boost/iostreams/stream.hpp>
 
 #include "../src/frow.h"
 #include "../src/kernel.h"
@@ -19,6 +23,7 @@
 #include "../src/known.hpp"
 #include "../src/record.cuh"
 #include "../src/util.cuh"
+#include "../src/util.hpp"
 #include "../src/sn.cuh"
 
 static inline void chk_impl(curandStatus_t code, const char *file, int line) {
@@ -125,25 +130,29 @@ char *command_generator(const char *text, int state) {
 
         // Determine position in the input
         size_t pos = tokens.size();
+        bool is_lr = !tokens.empty() && (tokens[0] == "L" || tokens[0] == "R");
         bool is_legacy = !tokens.empty() && tokens[0] == "legacy";
 
         if (pos == 1) {
             if ("legacy"s.starts_with(text)) matches.push_back("legacy");
+            if ("list"s.starts_with(text)) matches.push_back("list");
             if ("L"s.starts_with(text)) matches.push_back("L");
             if ("R"s.starts_with(text)) matches.push_back("R");
-        } else if (pos == 2) {
+        } else if (pos == 2 && (is_lr || is_legacy)) {
             // Complete <threads>
             for (const std::string &thread : THREADS) {
                 if (thread.starts_with(text))
                     matches.push_back(thread);
             }
-        } else if (pos == 3) {
+        } else if (pos == 3 && (is_lr || is_legacy)) {
             // Complete <blocks> (computed from `default_blocks`)
+            if ("auto"s.starts_with(text)) matches.push_back("auto");
             int threads = std::stoi(tokens[1]);
             int blocks = default_blocks(is_legacy, threads);
             matches.push_back(std::to_string(blocks));
-        } else if (pos == 4 && !is_legacy) {
+        } else if (pos == 4 && is_lr) {
             // Complete <shmem> (computed from `default_shmem`)
+            if ("auto"s.starts_with(text)) matches.push_back("auto");
             int threads = std::stoi(tokens[1]);
             int shmem = default_shmem(threads);
             matches.push_back(std::to_string(shmem));
@@ -248,19 +257,27 @@ int main(int argc, char *argv[]) {
     C(cudaMallocAsync(&ring_buffer, N_CHUNKS*CYC_CHUNK*sizeof(RX), stream));
     unsigned long long *n_outs;
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), stream));
+    unsigned long long *perf;
+    C(cudaMallocAsync(&perf, 4 * sizeof(long long), stream));
+
+    cudaDeviceProp prop;
+    C(cudaGetDeviceProperties(&prop, 0));
+
+    boost::iostreams::stream<boost::iostreams::file_descriptor_sink> csv(3,
+            boost::iostreams::close_handle);
+    csv << "n_cfgs,f0Lsz,f0Rsz,reverse,blocks,threads,shmem_len,fom,height,ea,n_outs,clockRate,oc,e,perf_lr,perf_n,perf_tile,compI,ex\n";
 
     auto launch = [&](const KParams &kp) {
         running = true;
-        unsigned long long tmp{};
-        C(cudaMemcpyAsync(n_outs, &tmp,
-                    sizeof(unsigned long long), cudaMemcpyHostToDevice, stream));
-        std::cout << kp.to_string(true) << " => ";
+        C(cudaMemsetAsync(n_outs, 0, sizeof(unsigned long long), stream));
+        C(cudaMemsetAsync(perf, 0, 4 * sizeof(unsigned long long), stream));
+        std::cout << kp.to_string(false) << " => ";
         std::cout.flush();
         std::cout.flush();
 
         KParamsFull kpf{ kp, height,
             ring_buffer, n_outs, N_CHUNKS,
-            nullptr, nullptr, cfgs, ea, f0L, f0R };
+            nullptr, nullptr, cfgs, ea, f0L, f0R, perf };
         cudaEvent_t start, stop;
         C(cudaEventCreate(&start));
         C(cudaEventCreate(&stop));
@@ -271,19 +288,59 @@ int main(int argc, char *argv[]) {
         C(cudaEventSynchronize(stop));
         float ms;
         C(cudaEventElapsedTime(&ms, start, stop));
-        C(cudaMemcpyAsync(&tmp, n_outs, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
+        unsigned long long outs;
+        C(cudaMemcpyAsync(&outs, n_outs, sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
+        unsigned long long perfs[4];
+        C(cudaMemcpyAsync(&perfs, perf, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
         C(cudaStreamSynchronize(stream));
-        std::cout << std::format("{} / {:.08f}ms\n", tmp, ms);
+        auto oc = std::min(16u, 1536u / kpf.threads) * 84; // max blocks per device
+        auto e = ((kpf.blocks + oc - 1) / oc);
+        // auto tpg = kpb.blocks * kpb.threads;
+        // auto iterations = (kpf.n_cfgs + tpg - 1) / tpg;
+        auto rt = (kpf.n_cfgs + kpf.threads - 1) / kpf.threads * kpf.threads
+            * 1000.0 * prop.clockRate / e;
+        auto perf_lr = perfs[0];
+        auto perf_n = perfs[1];
+        auto perf_tile = perfs[2];
+        auto perf_comp = perfs[3];
+        auto ex = 1000 * (perf_lr + perf_n + perf_tile) / rt / ms;
+        std::cout << std::format("{} / {:.01f}ms = ({:>7}+{:>7}+{:>7})*{} I{:.02f}% E{:.02f}% raw({:>7}+{:>7}+{:>7})\n",
+                outs, ms,
+                display(perf_lr / rt / ex / e), display(perf_n / rt / ex / e), display(perf_tile / rt / ex / e),
+                e,
+                100.0 * perf_comp / perf_tile, 100.0 * ex,
+                display(perf_lr / rt), display(perf_n / rt), display(perf_tile / rt));
+        running = false;
         C(cudaEventDestroy(start));
         C(cudaEventDestroy(stop));
-        running = false;
+        csv << std::setprecision(17);
+        csv << kpf.n_cfgs << ",";
+        csv << kpf.f0Lsz << ",";
+        csv << kpf.f0Rsz << ",";
+        csv << kpf.reverse << ",";
+        csv << kpf.blocks << ",";
+        csv << kpf.threads << ",";
+        csv << kpf.shmem_len << ",";
+        csv << kpf.fom() << ",";
+        csv << kpf.height << ",";
+        csv << (int)kpf.ea << ",";
+        csv << outs << ",";
+        csv << prop.clockRate << ",";
+        csv << oc << ",";
+        csv << e << ",";
+        csv << perf_lr / rt / ex / e << ",";
+        csv << perf_n / rt / ex / e << ",";
+        csv << perf_tile / rt / ex / e << ",";
+        csv << 1.0 * perf_comp / perf_tile << ",";
+        csv << ex << std::endl;
     };
 
     ks = KSizing{ n_cfgs, fanoutL, fanoutR };
     KParams kp{ ks };
-    std::cout << R"(<KParams> ::=)" << "\n";
-    std::cout << R"(    | "legacy" <threads> [<blocks>])" << "\n";
-    std::cout << R"(    | ("L"|"R") <threads> [<blocks> [<shmem>]])" << "\n";
+    std::cout << R"(<COMMAND> ::=)" << "\n";
+    std::cout << R"(    | "list")" << "\n";
+    std::cout << R"(    | "legacy"  <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
+    std::cout << R"(    | ("L"|"R") <threads> [(<blocks>|"auto") [(<shmem>|"auto") [<n_cfg>]])" << "\n";
     while (n_pars == -1) {
         auto input = readline("> ");
         if (input == nullptr)
@@ -295,32 +352,44 @@ int main(int argc, char *argv[]) {
         boost::split(tokens, line, boost::is_any_of(" "), boost::token_compress_on);
         if (!tokens.empty() && tokens.back().empty())
             tokens.pop_back();
-        if (tokens.size() < 2 || tokens.size() > 4) {
+        if (tokens.empty())
+            continue;
+        if (tokens[0] == "list") {
+            auto pars = ks.optimize();
+            for (auto i = 0zu; i < pars.size() && i < 20zu; i++)
+                pars[i].fom(true);
+            continue;
+        }
+        if (tokens.size() < 2 || tokens.size() > 5) {
             std::cout << "invalid <KParams>\n";
             continue;
         }
         if (tokens[0] == "legacy") {
             kp = KParams{ ks };
             kp.threads = std::stoull(tokens[1]);
-            if (tokens.size() < 3)
+            if (tokens.size() < 3 || tokens[2] == "auto")
                 kp.blocks = default_blocks(true, kp.threads);
             else
                 kp.blocks = std::stoull(tokens[2]);
+            if (tokens.size() >= 4)
+                kp.n_cfgs = std::stoull(tokens[3]);
         } else if (tokens[0] == "L" || tokens[0] == "R") {
             kp = KParams{ ks };
             if (tokens[0] == "L")
                 kp.reverse = true;
             kp.threads = std::stoull(tokens[1]);
-            if (tokens.size() < 3) {
+            if (tokens.size() < 3 || tokens[2] == "auto") {
                 kp.blocks = default_blocks(false, kp.threads);
             } else {
                 kp.blocks = std::stoull(tokens[2]);
             }
-            if (tokens.size() < 4) {
+            if (tokens.size() < 4 || tokens[3] == "auto") {
                 kp.shmem_len = default_shmem(kp.threads) / sizeof(frow32_t);
             } else {
                 kp.shmem_len = std::stoll(tokens[3]) / sizeof(frow32_t);
             }
+            if (tokens.size() >= 5)
+                kp.n_cfgs = std::stoull(tokens[4]);
         } else {
             continue;
         }
