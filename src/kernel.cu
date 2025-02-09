@@ -127,30 +127,13 @@ KParams KSizing::optimize(bool debug) const {
 #endif
     std::vector<KParams> pars;
     auto n = n_cfgs * f0Lsz * f0Rsz;
-    for (auto t = 1ull; t <= 512u; t <<= 1)
-        if ((n + t - 1) / t <= 2147483647ull)
-            pars.emplace_back(*this, false, (n + t - 1) / t, t, 0);
-    for (auto t = 3ull; t <= 1024u; t <<= 1)
-        if ((n + t - 1) / t <= 2147483647ull)
-            pars.emplace_back(*this, false, (n + t - 1) / t, t, 0);
-    auto wpn = (n_cfgs + 31) / 32;
+    if (n <= 256 * 2147483647ull)
+        pars.emplace_back(*this, false, (n + 256 - 1) / 256, 256, 0);
+    else if (n <= 768 * 2147483647ull)
+        pars.emplace_back(*this, false, (n + 768 - 1) / 768, 768, 0);
     for (auto i = 0; i < 8; i++) {
-        for (auto b = 1ull; b <= wpn && b <= 2147483647ull; b <<= 1) {
-            pars.emplace_back(*this, false, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-            pars.emplace_back(*this, true, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-        }
-        for (auto b = 3ull; b <= wpn && b <= 2147483647ull; b <<= 1) {
-            pars.emplace_back(*this, false, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-            pars.emplace_back(*this, true, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-        }
-        for (auto b = 7ull; b <= wpn && b <= 2147483647ull; b <<= 1) {
-            pars.emplace_back(*this, false, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-            pars.emplace_back(*this, true, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-        }
-        for (auto b = 21ull; b <= wpn && b <= 2147483647ull; b <<= 1) {
-            pars.emplace_back(*this, false, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-            pars.emplace_back(*this, true, b, known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-        }
+        pars.emplace_back(*this, false, (n_cfgs + known_t[i] - 1) / known_t[i],
+                known_t[i], known_shmem_b[i] / sizeof(frow32_t));
     }
     std::ranges::sort(pars, std::less{}, [](const KParams &kp) { return kp.fom(); });
 #ifdef BMARK
@@ -193,7 +176,7 @@ double KParams::fom() const {
     auto e = ((blocks + oc - 1) / oc);
 
     if (shmem_len == 0) {
-        auto c = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 1.63e-6;
+        auto c = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 2.0e-6;
         auto v = e * c + blocks * 1e-11;
 #ifdef BMARK
         if (debug) {
@@ -222,10 +205,6 @@ double KParams::fom() const {
         std::swap(nL, nR);
     }
 
-    auto tpb = static_cast<uint64_t>(threads);
-    auto tpg = static_cast<uint64_t>(blocks) * tpb;
-    auto iterations = (n_cfgs + tpg - 1) / tpg;
-
     auto m = 1.0 * nL * Ltile; // load Lcache
     if (nR == 1) // load Rcache
         m += Rtile;
@@ -235,7 +214,7 @@ double KParams::fom() const {
         m += 0.58 * ((Ltile + Rtile) * sizeof(frow32_t) - 48 * 1024ull);
     m *= 5e-4 * std::min(16u, 1536u / threads); // per block
 
-    auto c = nL * nR * Ltile * Rtile * iterations * 7.2e-200; // compute
+    auto c = nL * nR * Ltile * Rtile * 7.2e-200; // compute
 
     auto n = n_cfgs * 1.5e-5 * ::pow(nL * nR, 0.87); // load cfgs
 
@@ -253,5 +232,5 @@ double KParams::fom() const {
                 m, c, util, e, n, v);
     }
 #endif
-    return v * 1e-6; // + 500e-6;
+    return v / 1e-6; // + 500e-6;
 }

@@ -86,11 +86,11 @@ void launch_fix_cfgs(unsigned H, unsigned long long n_cfgs, cudaStream_t s) {
 
 static KSizing ks;
 
-int default_blocks(bool is_legacy, int threads) {
+int default_blocks(bool is_legacy, int threads, uint64_t n_cfgs) {
     if (is_legacy)
-        return (ks.n_cfgs * ks.f0Lsz * ks.f0Rsz + threads - 1) / threads;
+        return (n_cfgs * ks.f0Lsz * ks.f0Rsz + threads - 1) / threads;
     else
-        return (ks.n_cfgs + threads - 1) / threads;
+        return (n_cfgs + threads - 1) / threads;
 }
 
 int default_shmem(int threads) {
@@ -148,7 +148,7 @@ char *command_generator(const char *text, int state) {
             // Complete <blocks> (computed from `default_blocks`)
             if ("auto"s.starts_with(text)) matches.push_back("auto");
             int threads = std::stoi(tokens[1]);
-            int blocks = default_blocks(is_legacy, threads);
+            int blocks = default_blocks(is_legacy, threads, ks.n_cfgs);
             matches.push_back(std::to_string(blocks));
         } else if (pos == 4 && is_lr) {
             // Complete <shmem> (computed from `default_shmem`)
@@ -328,8 +328,8 @@ int main(int argc, char *argv[]) {
         csv << prop.clockRate << ",";
         csv << oc << ",";
         csv << e << ",";
-        csv << perf_lr / rt / ex / e << ",";
-        csv << perf_n / rt / ex / e << ",";
+        csv << 1e6 * perf_lr / rt / ex / e << ",";
+        csv << 1e6 * perf_n / rt / ex / e << ",";
         csv << perf_tile / rt / ex / e << ",";
         csv << 1.0 * perf_comp / perf_tile << ",";
         csv << ex << std::endl;
@@ -367,19 +367,21 @@ int main(int argc, char *argv[]) {
         if (tokens[0] == "legacy") {
             kp = KParams{ ks };
             kp.threads = std::stoull(tokens[1]);
-            if (tokens.size() < 3 || tokens[2] == "auto")
-                kp.blocks = default_blocks(true, kp.threads);
-            else
-                kp.blocks = std::stoull(tokens[2]);
             if (tokens.size() >= 4)
                 kp.n_cfgs = std::stoull(tokens[3]);
+            if (tokens.size() < 3 || tokens[2] == "auto")
+                kp.blocks = default_blocks(true, kp.threads, kp.n_cfgs);
+            else
+                kp.blocks = std::stoull(tokens[2]);
         } else if (tokens[0] == "L" || tokens[0] == "R") {
             kp = KParams{ ks };
             if (tokens[0] == "L")
                 kp.reverse = true;
             kp.threads = std::stoull(tokens[1]);
+            if (tokens.size() >= 5)
+                kp.n_cfgs = std::stoull(tokens[4]);
             if (tokens.size() < 3 || tokens[2] == "auto") {
-                kp.blocks = default_blocks(false, kp.threads);
+                kp.blocks = default_blocks(false, kp.threads, kp.n_cfgs);
             } else {
                 kp.blocks = std::stoull(tokens[2]);
             }
@@ -388,8 +390,6 @@ int main(int argc, char *argv[]) {
             } else {
                 kp.shmem_len = std::stoll(tokens[3]) / sizeof(frow32_t);
             }
-            if (tokens.size() >= 5)
-                kp.n_cfgs = std::stoull(tokens[4]);
         } else {
             continue;
         }
