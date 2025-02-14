@@ -29,9 +29,9 @@ struct Board {
                 v.push_back(valid(ch) ? k == ch ? '#' : '.' : ch);
         }
         base = Shape<L>{ the_base };
-        regions = map
-            | std::views::transform([](auto &kv){ return Shape<L>{ kv.second }; })
-            | std::ranges::to<std::vector>();
+        for (auto sh : map
+                | std::views::transform([](auto &kv){ return Shape<L>{ kv.second }; }))
+            regions.push_back(sh);
         count = 1zu;
         for (auto r : regions)
             count *= r.size();
@@ -45,14 +45,15 @@ struct Board {
     }
 
     void foreach(auto &&func) {
-        [&,end=regions.end()](this auto &&self, auto it, Shape<L> curr) {
+        auto f = [&,end=regions.end()](auto &&self, auto it, Shape<L> curr) {
             if (it == end) {
                 func(curr);
                 return;
             }
             for (auto pos : *it++)
-                self(it, curr.clear(pos));
-        }(regions.begin(), base);
+                self(self, it, curr.clear(pos));
+        };
+        f(f, regions.begin(), base);
     }
 };
 

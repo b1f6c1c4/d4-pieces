@@ -70,7 +70,7 @@ std::vector<Solution<L>> solve(const std::vector<Piece<L>> &lib, Shape<L> board,
     auto max_tiles = 0zu;
     for (auto &p : lib)
         max_tiles += p.canonical.size() * p.count;
-    [&](this auto &&self, Shape<L> open_tiles) {
+    auto f = [&](auto &&self, Shape<L> open_tiles) {
         if (open_tiles.size() > max_tiles)
             return false;
         if (!open_tiles) {
@@ -87,7 +87,7 @@ std::vector<Solution<L>> solve(const std::vector<Piece<L>> &lib, Shape<L> board,
             if (p.cover(pos, [&](Shape<L> placed, size_t trs, coords_t tra) {
                 if (!(open_tiles >= placed)) return false;
                 history.push_back(make_step(id, trs, tra, placed));
-                auto f = self(open_tiles - placed);
+                auto f = self(self, open_tiles - placed);
                 history.pop_back();
                 return f;
             }))
@@ -96,7 +96,8 @@ std::vector<Solution<L>> solve(const std::vector<Piece<L>> &lib, Shape<L> board,
             u--;
         }
         return false;
-    }(board);
+    };
+    f(f, board);
     return solutions;
 }
 
@@ -107,7 +108,7 @@ size_t solve_count(const std::vector<Piece<L>> &lib, Shape<L> board) {
     auto max_tiles = 0zu;
     for (auto &p : lib)
         max_tiles += p.canonical.size() * p.count;
-    [&](this auto &&self, Shape<L> open_tiles) {
+    auto f = [&](auto &&self, Shape<L> open_tiles) {
 #if EMSCRIPTEN
         boost::this_thread::interruption_point();
 #endif
@@ -126,13 +127,14 @@ size_t solve_count(const std::vector<Piece<L>> &lib, Shape<L> board) {
             max_tiles -= p.canonical.size();
             p.cover(pos, [&](Shape<L> placed, size_t trs, coords_t tra) {
                 if (!(open_tiles >= placed)) return false;
-                self(open_tiles - placed);
+                self(self, open_tiles - placed);
                 return false;
             });
             max_tiles += p.canonical.size();
             u--;
         }
-    }(board);
+    };
+    f(f, board);
     return count;
 }
 

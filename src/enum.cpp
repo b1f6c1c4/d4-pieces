@@ -71,8 +71,9 @@ int main(int argc, char *argv[]) {
         if (!i) continue;
 
         std::print(std::cout, "static const uint64_t s{}[]{{ ", i);
-        auto values = bin.set | std::views::transform(&Shape<L>::get_value)
-            | std::ranges::to<std::vector>();
+        std::vector<Shape<L>::shape_t> values;
+        for (auto v : bin.set | std::views::transform(&Shape<L>::get_value))
+            values.push_back(v);
         std::ranges::sort(values);
         for (auto v : values)
             std::cout << v << ", ";

@@ -69,7 +69,7 @@ void compute_frow_on_cpu(bool show_report) {
 
     char used[256]{};
     std::vector<tt_t> used_v;
-    auto invest = [&](this auto &&self, uint64_t empty_area, uint64_t mask, uint64_t original, auto &&obj) {
+    auto invest = [&](auto &&self, uint64_t empty_area, uint64_t mask, uint64_t original, auto &&obj) {
         if (!(empty_area & mask)) {
             std::vector<nm_t> nms(4, 0xff);
             for (auto &&[nm, tt] : std::views::zip(nms, used_v))
@@ -113,7 +113,7 @@ void compute_frow_on_cpu(bool show_report) {
             if (shape & ~empty_area) [[unlikely]]
                 continue;
             used[nm] = 1, used_v.push_back({ shape, nm });
-            self(empty_area & ~shape, mask, original, obj);
+            self(self, empty_area & ~shape, mask, original, obj);
             used[nm] = 0, used_v.pop_back();
         }
     };
@@ -149,7 +149,7 @@ void compute_frow_on_cpu(bool show_report) {
         std::set<frow_t> f;
         if (show_report)
             std::print("[0b1111{:04b}] => L", ea);
-        invest(ea | ~0b00001111ull, 0b00001111ull, ea | ~0b00001111ull, f);
+        invest(invest, ea | ~0b00001111ull, 0b00001111ull, ea | ~0b00001111ull, f);
         h_frowInfoL[ea] = regularize(frowL[ea], f);
         if (show_report)
             std::print("\n");
@@ -158,7 +158,7 @@ void compute_frow_on_cpu(bool show_report) {
         std::set<frow_t> f;
         if (show_report)
             std::print("[0b{:04b}0000] => R", ea);
-        invest((ea << 4) | ~0b11111111ull, 0b11110000ull, (ea << 4) | ~0b11111111ull, f);
+        invest(invest, (ea << 4) | ~0b11111111ull, 0b11110000ull, (ea << 4) | ~0b11111111ull, f);
         h_frowInfoR[ea] = regularize(frowR[ea], f);
         if (show_report)
             std::print("\n");

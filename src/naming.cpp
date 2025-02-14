@@ -39,7 +39,7 @@ Naming::Naming(uint64_t m, uint64_t M, uint64_t n, uint64_t N, uint64_t t, const
 
     // find partitions
     V curr;
-    [&,that=this](this auto &&self, uint64_t left, uint64_t n) {
+    auto f = [&,that=this](auto &&self, uint64_t left, uint64_t n) {
         auto m = that->min_m + curr.size();
         if (!left) {
             if (n >= that->min_n) {
@@ -54,10 +54,11 @@ Naming::Naming(uint64_t m, uint64_t M, uint64_t n, uint64_t N, uint64_t t, const
         curr.push_back(0);
         for (auto i = 0zu; i <= left / m && n + i <= that->max_n && i <= that->arr_sizes[m]; i++) {
             curr.back() = i;
-            self(left - i * m, n + i);
+            self(self, left - i * m, n + i);
         }
         curr.pop_back();
-    }(tgt, 0);
+    };
+    f(f, tgt, 0);
 
     // find m_sizes
     for (auto &pt : partitions) {
