@@ -74,7 +74,7 @@ else()
     target_compile_options(enum PRIVATE -g -O3)
 
     add_executable(kernel
-        bmark/kernel.cu
+        bmark/kernel_bmark.cu
         src/frow.cpp
         src/frow.cu
         src/kernel.cu
