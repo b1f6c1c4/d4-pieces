@@ -39,11 +39,10 @@ extern unsigned g_sym;
 
 // #define N_CHUNKS 45
 #define N_CHUNKS 2
-__managed__ R *cfgs;
 
 template <unsigned H>
 __launch_bounds__(768, 2)
-__global__ void fix_cfgs(unsigned long long n_cfgs) {
+__global__ void fix_cfgs(R *cfgs, unsigned long long n_cfgs) {
     auto idx = threadIdx.x + (uint64_t)blockDim.x * blockIdx.x;
     if (idx >= n_cfgs) return;
     auto cfg = parse_R<H>(cfgs[idx], 0x00);
@@ -66,21 +65,23 @@ __global__ void fix_cfgs(unsigned long long n_cfgs) {
                 nm[++ub] = nm[i];
         }
         cfg.nm_cnt = ub;
+    } else {
+        cfg.nm_cnt = 0;
     }
     for (auto i = cfg.nm_cnt; i < 16u; i++)
         nm[i] = 0xff;
     cfgs[idx] = assemble_R<H>(cfg);
 }
 
-void launch_fix_cfgs(unsigned H, unsigned long long n_cfgs, cudaStream_t s) {
+void launch_fix_cfgs(unsigned H, R *cfgs, unsigned long long n_cfgs, cudaStream_t s) {
     switch (H) {
-        case 7: fix_cfgs<7><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(n_cfgs); break;
-        case 6: fix_cfgs<6><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(n_cfgs); break;
-        case 5: fix_cfgs<5><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(n_cfgs); break;
-        case 4: fix_cfgs<4><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(n_cfgs); break;
-        case 3: fix_cfgs<3><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(n_cfgs); break;
-        case 2: fix_cfgs<2><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(n_cfgs); break;
-        case 1: fix_cfgs<1><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(n_cfgs); break;
+        case 7: fix_cfgs<7><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(cfgs, n_cfgs); break;
+        case 6: fix_cfgs<6><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(cfgs, n_cfgs); break;
+        case 5: fix_cfgs<5><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(cfgs, n_cfgs); break;
+        case 4: fix_cfgs<4><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(cfgs, n_cfgs); break;
+        case 3: fix_cfgs<3><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(cfgs, n_cfgs); break;
+        case 2: fix_cfgs<2><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(cfgs, n_cfgs); break;
+        case 1: fix_cfgs<1><<<(n_cfgs + 768 - 1) / 768, 768, 0, s>>>(cfgs, n_cfgs); break;
     }
 }
 
@@ -267,7 +268,8 @@ int main(int argc, char *argv[]) {
                 fanoutR*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
 
     std::print("allocate {} cfgs\n", n_cfgs);
-    C(cudaMallocManaged(&cfgs, n_cfgs*sizeof(R)));
+    R *cfgs;
+    C(cudaMallocAsync(&cfgs, n_cfgs*sizeof(R), stream));
     std::print("randomize {} cfgs\n", n_cfgs);
     curandGenerator_t gen;
     C(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
@@ -275,7 +277,7 @@ int main(int argc, char *argv[]) {
     C(curandGenerateUniformDouble(gen,
                 reinterpret_cast<double *>(cfgs), n_cfgs*sizeof(R)/sizeof(double)));
     std::print("patch {} cfgs\n", n_cfgs);
-    launch_fix_cfgs(height, n_cfgs, stream);
+    launch_fix_cfgs(height, cfgs, n_cfgs, stream);
     C(cudaPeekAtLastError());
 
     RX *ring_buffer;
@@ -285,6 +287,7 @@ int main(int argc, char *argv[]) {
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), stream));
     unsigned long long *perf;
     C(cudaMallocAsync(&perf, 4 * sizeof(long long), stream));
+    C(cudaStreamSynchronize(stream));
 
     cudaDeviceProp prop;
     C(cudaGetDeviceProperties(&prop, 0));
