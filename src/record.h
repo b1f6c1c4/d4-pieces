@@ -25,5 +25,8 @@ static_assert(alignof(RX) == 4);
 struct RCfg {
     uint64_t empty_area;
     uint32_t nm_cnt;
-    uint32_t ex[4];
+    union {
+        uint32_t ex[4];
+        uint8_t nm[16];
+    };
 };

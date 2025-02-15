@@ -19,7 +19,7 @@ add_compile_options(-Wno-unknown-pragmas)
 add_compile_options(-Wno-sign-compare)
 add_compile_options(-Wno-unused-command-line-argument)
 add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20040>)
-set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+set(CMAKE_CUDA_SEPARABLE_COMPILATION OFF)
 set(CMAKE_SHARED_LINKER_FLAGS -Wl,--no-undefined)
 set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 set(CMAKE_CUDA_ARCHITECTURES 86)
@@ -51,9 +51,7 @@ else()
         src/frow.cu
         src/frow.cpp
         src/kernel.cu
-        src/kernel_impl.cu
         src/device.cu
-        src/record.cu
         src/region.cu
         src/sorter.cpp
         src/naming.cpp
@@ -71,10 +69,8 @@ else()
         src/frow.cpp
         src/frow.cu
         src/kernel.cu
-        src/kernel_impl.cu
         src/known1.cpp
         src/known2.cpp
-        src/record.cu
         src/naming.cpp
         src/Shape.cpp)
     target_compile_definitions(kernel PUBLIC BMARK)
@@ -82,6 +78,10 @@ else()
     target_link_libraries(kernel PRIVATE boost_iostreams)
     target_link_libraries(kernel PRIVATE curand)
     target_link_libraries(kernel PRIVATE readline)
+    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--keep>)
+    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--keep-dir>)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/kernel.keep/)
+    target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${CMAKE_CURRENT_BINARY_DIR}/kernel.keep/>)
 
     add_library(sorter OBJECT bmark/sorter.cpp)
     target_compile_definitions(sorter INTERFACE BMARK)
