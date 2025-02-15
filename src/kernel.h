@@ -25,11 +25,11 @@ struct KSizing {
 };
 
 enum class KKind {
-    // shmem_len == 0
+    // Ltile == 0, Rtile == 0
     Legacy,        // b*t >= n_cfgs * f0Lsz * f0Rsz
     CoalescedR,    // b*t >= n_cfgs * f0Lsz * f0Rsz
     CoalescedL,    // b*t >= n_cfgs * f0Lsz * f0Rsz
-    // shmem_len == several KiB
+    // Ltile + Rtile == several KiB
     TiledStandard, // b*t >= n_cfgs
     TiledReversed, // b*t >= n_cfgs; not recommended
 };
@@ -38,7 +38,7 @@ struct KParams : KSizing {
     KKind ty;
     uint64_t blocks;
     uint32_t threads;
-    unsigned shmem_len;
+    unsigned Ltile, Rtile;
 
 #ifdef BMARK
     double fom(bool debug = false) const;

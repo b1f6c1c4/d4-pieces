@@ -146,15 +146,19 @@ char *command_generator(const char *text, int state) {
         } else if (pos == 3 && (is_lr || is_co || is_legacy)) {
             // Complete <blocks> (computed from `default_blocks`)
             if ("auto"s.starts_with(text)) matches.push_back("auto");
-            int threads = std::stoi(tokens[1]);
-            int blocks = default_blocks(tokens[0], threads, ks.n_cfgs);
+            auto threads = std::stoi(tokens[1]);
+            auto blocks = default_blocks(tokens[0], threads, ks.n_cfgs);
             matches.push_back(std::to_string(blocks));
         } else if (pos == 4 && is_lr) {
-            // Complete <shmem> (computed from `default_shmem`)
-            if ("auto"s.starts_with(text)) matches.push_back("auto");
-            int threads = std::stoi(tokens[1]);
-            int shmem = default_shmem(threads);
-            matches.push_back(std::to_string(shmem));
+            // Complete <Ltile> (computed from `default_shmem`)
+            auto threads = std::stoi(tokens[1]);
+            auto Ltile = default_shmem(threads) / sizeof(frow32_t) / 2;
+            matches.push_back(std::to_string(Ltile));
+        } else if (pos == 5 && is_lr) {
+            // Complete <Rtile> (computed from `default_shmem`)
+            auto threads = std::stoi(tokens[1]);
+            auto Rtile = default_shmem(threads) / sizeof(frow32_t) / 2;
+            matches.push_back(std::to_string(Rtile));
         }
     }
 
@@ -314,7 +318,7 @@ int main(int argc, char *argv[]) {
     C(cudaGetDeviceProperties(&prop, 0));
 
     FD csv{ 3 };
-    csv << "n_cfgs,f0Lsz,f0Rsz,reverse,blocks,threads,shmem_len,fom,height,ea,n_outs,clockRate,oc,e,perf_lr,perf_n,perf_tile,compI,ex\n";
+    csv << "n_cfgs,f0Lsz,f0Rsz,reverse,blocks,threads,Ltile,Rtile,fom,height,ea,n_outs,clockRate,oc,e,perf_lr,perf_n,perf_tile,compI,ex\n";
 
     auto launch = [&](const KParams &kp) {
         running = true;
@@ -377,7 +381,8 @@ int main(int argc, char *argv[]) {
         }
         csv << kpf.blocks << ",";
         csv << kpf.threads << ",";
-        csv << kpf.shmem_len << ",";
+        csv << kpf.Ltile << ",";
+        csv << kpf.Rtile << ",";
         csv << kpf.fom() << ",";
         csv << kpf.height << ",";
         csv << (int)kpf.ea << ",";
@@ -398,7 +403,7 @@ int main(int argc, char *argv[]) {
     std::cout << R"(    | "list")" << "\n";
     std::cout << R"(    | "legacy"    <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
     std::cout << R"(    | ("CL"|"CR") <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
-    std::cout << R"(    | ("L"|"R")   <threads> [(<blocks>|"auto") [(<shmem>|"auto") [<n_cfg>]])" << "\n";
+    std::cout << R"(    | ("L"|"R")   <threads> [(<blocks>|"auto") [<Ltile> <Rtile> [<n_cfg>]])" << "\n";
     while (n_pars == -1) {
         auto input = readline("> ");
         if (input == nullptr)
@@ -447,17 +452,19 @@ int main(int argc, char *argv[]) {
             if (tokens[0] == "L")
                 kp.ty = KKind::TiledReversed;
             kp.threads = std::stoull(tokens[1]);
-            if (tokens.size() >= 5)
-                kp.n_cfgs = std::stoull(tokens[4]);
+            if (tokens.size() >= 6)
+                kp.n_cfgs = std::stoull(tokens[5]);
             if (tokens.size() < 3 || tokens[2] == "auto") {
                 kp.blocks = default_blocks(tokens[0], kp.threads, kp.n_cfgs);
             } else {
                 kp.blocks = std::stoull(tokens[2]);
             }
             if (tokens.size() < 4 || tokens[3] == "auto") {
-                kp.shmem_len = default_shmem(kp.threads) / sizeof(frow32_t);
+                kp.Ltile = default_shmem(kp.threads) / sizeof(frow32_t) / 2;
+                kp.Rtile = default_shmem(kp.threads) / sizeof(frow32_t) / 2;
             } else {
-                kp.shmem_len = std::stoll(tokens[3]) / sizeof(frow32_t);
+                kp.Ltile = std::stoll(tokens[3]);
+                kp.Rtile = std::stoll(tokens[4]);
             }
         } else {
             continue;

@@ -66,7 +66,7 @@ void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
 template <unsigned H, int W, bool Reverse>
 __global__
 __launch_bounds__(W, 1536 / W)
-void tiled_row_search(unsigned shmem_len, K_PARAMS) {
+void tiled_row_search(unsigned Ltile, unsigned Rtile, K_PARAMS) {
 
     auto tpb = static_cast<uint64_t>(blockDim.x);
     if (tpb * blockIdx.x >= n_cfgs) // this block shouldn't even exist!
@@ -97,26 +97,22 @@ void tiled_row_search(unsigned shmem_len, K_PARAMS) {
         f0X = f0R, f0Xsz = f0Rsz;
     }
 
-    uint32_t Ytile, Xtile;
-    if (f0Ysz + f0Xsz <= shmem_len) {
-        Ytile = f0Ysz, Xtile = f0Xsz;
-    } else if (f0Ysz < shmem_len / 2) {
-        Ytile = f0Ysz, Xtile = shmem_len - f0Ysz;
-    } else if (f0Xsz < shmem_len / 2) {
-        Ytile = shmem_len - f0Xsz, Xtile = f0Xsz;
-    } else {
-        Ytile = shmem_len / 2, Xtile = shmem_len - Ytile;
-    }
-    extern __shared__ frow32_t shmem[/* shmem_len */];
-    auto *Ycache = shmem;
-    auto *Xcache = shmem + Ytile;
+    Ltile = min(Ltile, f0Lsz);
+    Rtile = min(Rtile, f0Rsz);
 
-    const frow32_t *Lcache;
-    const frow32_t *Rcache;
+    extern __shared__ frow32_t shmem[/* Ltile + Rtile */];
+    auto *Lcache = shmem;
+    auto *Rcache = shmem + Ltile;
+
+    frow32_t *Ycache;
+    frow32_t *Xcache;
+    unsigned Ytile, Xtile;
     if constexpr (Reverse) {
-        Lcache = Xcache, Rcache = Ycache;
+        Xcache = Lcache, Ycache = Rcache;
+        Xtile = Ltile, Ytile = Rtile;
     } else {
-        Lcache = Ycache, Rcache = Xcache;
+        Ycache = Lcache, Xcache = Rcache;
+        Ytile = Ltile, Xtile = Rtile;
     }
 
     if (f0Xsz <= Xtile) {
@@ -188,7 +184,7 @@ void tiled_row_search(unsigned shmem_len, K_PARAMS) {
 template <unsigned H, int Coalesced>
 __global__
 __launch_bounds__(768, 2)
-void linear_row_search(unsigned, K_PARAMS) {
+void linear_row_search(unsigned, unsigned, K_PARAMS) {
     static_assert(-1 <= Coalesced && Coalesced <= +1,
             "Coalesced must be -1, 0, +1");
 

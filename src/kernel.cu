@@ -22,45 +22,45 @@ void KParamsFull::launch(cudaStream_t stream) {
 #define ARGS_EX
 #endif
 #define ARGS \
-    shmem_len, \
+    Ltile, Rtile, \
     ring_buffer, n_outs, n_chunks, \
     n_reader_chunk, n_writer_chunk, \
     cfgs, n_cfgs, \
     ea, f0L, f0Lsz, f0R, f0Rsz ARGS_EX
 
-#define L(sh, k, t) \
-    do { if (height == 8) k<8, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 7) k<7, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 6) k<6, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 5) k<5, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 4) k<4, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 3) k<3, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 2) k<2, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 1) k<1, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
+#define L(k, t) \
+    do { if (height == 8) k<8, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 7) k<7, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 6) k<6, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 5) k<5, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 4) k<4, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 3) k<3, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 2) k<2, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 1) k<1, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
     else THROW("height {} not supported", height); \
     } while (false)
 
     switch (ty) {
         case KKind::Legacy:
-            L(0, linear_row_search, 0);
+            L(linear_row_search, 0);
             break;
         case KKind::CoalescedR:
-            L(0, linear_row_search, +1);
+            L(linear_row_search, +1);
             break;
         case KKind::CoalescedL:
-            L(0, linear_row_search, -1);
+            L(linear_row_search, -1);
             break;
         case KKind::TiledStandard:
             if (threads > 768)
-                L(shmem_len, tiled_row_search, 1024 COMMA false);
+                L(tiled_row_search, 1024 COMMA false);
             else
-                L(shmem_len, tiled_row_search, 768 COMMA false);
+                L(tiled_row_search, 768 COMMA false);
             break;
        case KKind::TiledReversed:
             if (threads > 768)
-                L(shmem_len, tiled_row_search, 1024 COMMA true);
+                L(tiled_row_search, 1024 COMMA true);
             else
-                L(shmem_len, tiled_row_search, 768 COMMA true);
+                L(tiled_row_search, 768 COMMA true);
             break;
         default:
             THROW("unknown ty");
@@ -147,8 +147,9 @@ std::string KParams::to_string(bool full) const {
             break;
         case KKind::TiledStandard:
         case KKind::TiledReversed:
-            s = std::format("<<<{:9},{:5},{:6}>>>[{}]", blocks, threads,
-                    shmem_len * sizeof(frow32_t), ty == KKind::TiledReversed ? 'L' : 'R');
+            s = std::format("<<<{:9},{:5},{:4}*{:4}>>>[{}]", blocks, threads,
+                    Ltile, Rtile,
+                    ty == KKind::TiledReversed ? 'L' : 'R');
             break;
         default:
             THROW("unknown ty");
@@ -168,7 +169,7 @@ double KParams::fom() const {
     auto util = 1536.0 / ((1536u / threads) * threads);
     auto e = ((blocks + oc - 1) / oc);
 
-    if (shmem_len == 0) {
+    if (ty == KKind::Legacy) {
         auto c = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 2.0e-6;
         auto v = e * c + blocks * 1e-11;
 #ifdef BMARK
@@ -181,47 +182,35 @@ double KParams::fom() const {
         return v; // + 500e-6;
     }
 
-    uint32_t Ltile, Rtile;
-    if (f0Lsz + f0Rsz <= shmem_len) {
-        Ltile = f0Lsz, Rtile = f0Rsz;
-    } else if (f0Lsz < shmem_len / 2) {
-        Ltile = f0Lsz, Rtile = shmem_len - f0Lsz;
-    } else if (f0Rsz < shmem_len / 2) {
-        Ltile = shmem_len - f0Rsz, Rtile = f0Rsz;
-    } else {
-        Ltile = shmem_len / 2, Rtile = shmem_len - Ltile;
-    }
     auto nL = (f0Lsz + Ltile - 1) / Ltile;
     auto nR = (f0Rsz + Rtile - 1) / Rtile;
-    if (ty == KKind::TiledReversed) {
-        std::swap(Ltile, Rtile);
-        std::swap(nL, nR);
-    }
+    auto nY = ty == KKind::TiledReversed ? nR : nL;
+    auto nX = ty == KKind::TiledReversed ? nL : nR;
+    auto Ytile = ty == KKind::TiledReversed ? Rtile : Ltile;
+    auto Xtile = ty == KKind::TiledReversed ? Ltile : Rtile;
 
-    auto m = 1.0 * nL * Ltile; // load Lcache
-    if (nR == 1) // load Rcache
-        m += Rtile;
+    auto m = 1.0 * nY * Ytile; // load Ycache
+    if (nX == 1) // load Xcache
+        m += Xtile;
     else
-        m += Rtile * nL * nR * 0.8;
+        m += Xtile * nY * nX * 0.8;
     if ((Ltile + Rtile) * sizeof(frow32_t) >= 48 * 1024ull) // beyond 48K penalty
         m += 0.58 * ((Ltile + Rtile) * sizeof(frow32_t) - 48 * 1024ull);
     m *= 5e-4 * std::min(16u, 1536u / threads); // per block
 
-    auto c = nL * nR * Ltile * Rtile * 7.2e-200; // compute
+    auto c = nY * nX * Ltile * Rtile * 7.2e-200; // compute
 
     auto n = n_cfgs * 1.5e-5 * ::pow(nL * nR, 0.87); // load cfgs
 
     auto v = e * (m + c * util) + n;
 #ifdef BMARK
     if (debug) {
-        std::print("<<<{:9},{:5},{:6}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f}*{})*{:3}+{:9.2f}={:9.2f}\n",
-                blocks, threads, shmem_len * sizeof(frow32_t),
+        std::print("<<<{:9},{:5},{:4}*{:4}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f}*{})*{:3}+{:9.2f}={:9.2f}\n",
+                blocks, threads, Ltile, Rtile,
                 ty == KKind::TiledReversed ? "R" : "L",
-                Ltile,
-                nL,
+                Ltile, nL,
                 ty == KKind::TiledReversed ? "L" : "R",
-                Rtile,
-                nR,
+                Rtile, nR,
                 m, c, util, e, n, v);
     }
 #endif
