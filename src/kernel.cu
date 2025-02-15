@@ -100,22 +100,30 @@ KParams KSizing::optimize(bool debug) const {
     std::vector<KParams> pars;
     auto n = n_cfgs * f0Lsz * f0Rsz;
     if (n <= 256 * 2147483647ull)
-        pars.emplace_back(*this, KKind::Legacy, (n + 256 - 1) / 256, 256, 0);
+        pars.emplace_back(*this, KKind::Legacy, 256);
     else if (n <= 768 * 2147483647ull)
-        pars.emplace_back(*this, KKind::Legacy, (n + 768 - 1) / 768, 768, 0);
+        pars.emplace_back(*this, KKind::Legacy, 768);
     if (n <= 256 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedR, (n + 256 - 1) / 256, 256, 0);
+        pars.emplace_back(*this, KKind::CoalescedR, 256);
     else if (n <= 768 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedL, (n + 768 - 1) / 768, 768, 0);
+        pars.emplace_back(*this, KKind::CoalescedL, 768);
     if (n <= 256 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedR, (n + 256 - 1) / 256, 256, 0);
+        pars.emplace_back(*this, KKind::CoalescedR, 256);
     else if (n <= 768 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedL, (n + 768 - 1) / 768, 768, 0);
-    for (auto i = 0; i < 8; i++) {
-        pars.emplace_back(*this, KKind::TiledStandard,
-                (n_cfgs + known_t[i] - 1) / known_t[i],
-                known_t[i], known_shmem_b[i] / sizeof(frow32_t));
-    }
+        pars.emplace_back(*this, KKind::CoalescedL, 768);
+    for (auto nL = 1u; nL <= (f0Lsz + 32 - 1) / 32; nL++)
+        for (auto nR = 1u; nR <= (f0Rsz + 32 - 1) / 32; nR++) {
+            auto Ltile = (f0Lsz + nL - 1) / nL;
+            auto Rtile = (f0Rsz + nR - 1) / nR;
+            for (auto i = 0; i < 8; i++) {
+                if ((Ltile + Rtile) * sizeof(frow32_t) > known_shmem_b[i])
+                    continue;
+                pars.emplace_back(*this, KKind::TiledStandard,
+                        known_t[i], Ltile, Rtile);
+                pars.emplace_back(*this, KKind::TiledReversed,
+                        known_t[i], Ltile, Rtile);
+            }
+        }
     std::ranges::sort(pars, std::less{}, [](const KParams &kp) { return kp.fom(); });
 #ifdef BMARK
     return pars;
@@ -185,7 +193,7 @@ double KParams::fom() const {
     auto util = 1536.0 / ((1536u / threads) * threads);
     auto e = ((blocks() + oc - 1) / oc);
 
-    if (ty == KKind::Legacy) {
+    if (ty == KKind::Legacy || ty == KKind::CoalescedR || ty == KKind::CoalescedL) {
         auto c = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 2.0e-6;
         auto v = e * c + blocks() * 1e-11;
 #ifdef BMARK
@@ -222,5 +230,5 @@ double KParams::fom() const {
                 m, c, util, e, n, v);
     }
 #endif
-    return v / 1e-6; // + 500e-6;
+    return v * 1e-6; // + 500e-6;
 }

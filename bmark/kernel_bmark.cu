@@ -302,7 +302,7 @@ int main(int argc, char *argv[]) {
     C(cudaGetDeviceProperties(&prop, 0));
 
     FD csv{ 3 };
-    csv << "n_cfgs,f0Lsz,f0Rsz,reverse,blocks,threads,Ltile,Rtile,fom,height,ea,n_outs,clockRate,oc,e,perf_lr,perf_n,perf_tile,compI,ex\n";
+    csv << "n_cfgs,f0Lsz,f0Rsz,reverse,blocks,threads,Ltile,Rtile,ms,fom,height,ea,n_outs,clockRate,oc,e,perf_lr,perf_n,perf_tile,compI,ex\n";
 
     auto launch = [&](const KParams &kp) {
         running = true;
@@ -363,10 +363,12 @@ int main(int argc, char *argv[]) {
             case KKind::TiledStandard: csv << "R"; break;
             case KKind::TiledReversed: csv << "L"; break;
         }
+        csv << ",";
         csv << kpf.blocks() << ",";
         csv << kpf.threads << ",";
         csv << kpf.Ltile << ",";
         csv << kpf.Rtile << ",";
+        csv << ms << ",";
         csv << kpf.fom() << ",";
         csv << kpf.height << ",";
         csv << (int)kpf.ea << ",";
