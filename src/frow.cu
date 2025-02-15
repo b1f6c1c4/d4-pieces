@@ -70,10 +70,12 @@ void show_gpu_devices() {
     printf("  ECC: %s\n",prop.ECCEnabled ? "yes" : "no");
     printf("  Cooperative launch: %s\n",prop.cooperativeLaunch ? "yes" : "no");
     printf("  DMMA from host: %s\n",prop.directManagedMemAccessFromHost ? "yes" : "no");
-    printf("  L2 Cache Size (KiB): %d\n",prop.l2CacheSize / 1024);
-    printf("  Shared mem per block (KiB): %lu\n",prop.sharedMemPerBlock / 1024);
-    printf("  Shared mem per mp (KiB): %lu\n",prop.sharedMemPerMultiprocessor / 1024);
-    printf("  Const mem (KiB): %lu\n",prop.totalConstMem / 1024);
+    printf("  L2 Cache Size (B): %d\n",prop.l2CacheSize);
+    printf("  Persistting L2 Cache Size (B): %d\n",prop.persistingL2CacheMaxSize);
+    printf("  L2 Window (B): %d\n",prop.accessPolicyMaxWindowSize);
+    printf("  Shared mem per block (B): %lu\n",prop.sharedMemPerBlock);
+    printf("  Shared mem per mp (B): %lu\n",prop.sharedMemPerMultiprocessor);
+    printf("  Const mem (B): %lu\n",prop.totalConstMem);
     printf("  Global mem (MiB): %lf\n",prop.totalGlobalMem / 1024.0 / 1024);
     int v;
     cudaDeviceGetAttribute(&v, cudaDevAttrMemSyncDomainCount, i);
