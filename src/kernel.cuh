@@ -134,8 +134,8 @@ void tiled_row_search(unsigned Ltile, unsigned Rtile, K_PARAMS) {
 
             for (auto l = 0u; l < Lsz; l++) {
                 frow_t fL = Lcache[l];
-                if (fL.shape & ~cfg.empty_area) [[unlikely]] continue;
-                if (fR.shape & fL.shape) [[unlikely]] continue;
+                if (fL.shape & ~cfg.empty_area || fR.shape & fL.shape) [[likely]]
+                    continue;
 
                 BEFORE(comp);
                 impl<H>(cfg, fL, fR,
