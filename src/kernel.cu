@@ -57,7 +57,7 @@ void KParamsFull::launch(cudaStream_t stream) {
                 L(shmem_len, tiled_row_search, 768 COMMA false);
             break;
        case KKind::TiledReversed:
-            if (threads > 1024)
+            if (threads > 768)
                 L(shmem_len, tiled_row_search, 1024 COMMA true);
             else
                 L(shmem_len, tiled_row_search, 768 COMMA true);
@@ -83,8 +83,8 @@ void prepare_kernels() {
     SS(0, linear_row_search, 0)
     SS(0, linear_row_search, +1)
     SS(0, linear_row_search, -1)
-    SS(101376, tiled_row_search, 768  COMMA true)
-    SS(101376, tiled_row_search, 768  COMMA false)
+    SS(50176, tiled_row_search, 768  COMMA true)
+    SS(50176, tiled_row_search, 768  COMMA false)
     SS(101376, tiled_row_search, 1024 COMMA true)
     SS(101376, tiled_row_search, 1024 COMMA false)
 }
@@ -99,20 +99,18 @@ KParams KSizing::optimize(bool debug) const {
 #endif
     std::vector<KParams> pars;
     auto n = n_cfgs * f0Lsz * f0Rsz;
-    auto ncR = n_cfgs * ((f0Lsz + 10) / 11) * f0Rsz;
-    auto ncL = n_cfgs * f0Lsz * ((f0Rsz + 10) / 11);
     if (n <= 256 * 2147483647ull)
         pars.emplace_back(*this, KKind::Legacy, (n + 256 - 1) / 256, 256, 0);
     else if (n <= 768 * 2147483647ull)
         pars.emplace_back(*this, KKind::Legacy, (n + 768 - 1) / 768, 768, 0);
-    if (ncR <= 256 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedR, (ncR + 256 - 1) / 256, 256, 0);
-    else if (ncR <= 768 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedL, (ncR + 768 - 1) / 768, 768, 0);
-    if (ncL <= 256 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedR, (ncL + 256 - 1) / 256, 256, 0);
-    else if (ncL <= 768 * 2147483647ull)
-        pars.emplace_back(*this, KKind::CoalescedL, (ncL + 768 - 1) / 768, 768, 0);
+    if (n <= 256 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedR, (n + 256 - 1) / 256, 256, 0);
+    else if (n <= 768 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedL, (n + 768 - 1) / 768, 768, 0);
+    if (n <= 256 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedR, (n + 256 - 1) / 256, 256, 0);
+    else if (n <= 768 * 2147483647ull)
+        pars.emplace_back(*this, KKind::CoalescedL, (n + 768 - 1) / 768, 768, 0);
     for (auto i = 0; i < 8; i++) {
         pars.emplace_back(*this, KKind::TiledStandard,
                 (n_cfgs + known_t[i] - 1) / known_t[i],

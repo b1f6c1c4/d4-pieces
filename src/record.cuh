@@ -3,7 +3,7 @@
 #include "record.h"
 
 template <unsigned H>
-__device__
+__device__ __forceinline__
 RCfg parse_R(R cfg, uint8_t ea) {
     static_assert(H <= 8);
     static_assert(H >= 1);
@@ -41,10 +41,9 @@ RCfg parse_R(R cfg, uint8_t ea) {
 }
 
 template <unsigned H> // height - 1
-__device__
+__device__ __forceinline__
 RX assemble_R(RCfg rc) {
     static_assert(H <= 7);
-    __builtin_assume(!(rc.empty_area & 0b11111111u));
     RX cfg;
     cfg.ea = rc.empty_area >> 8 & 0xffu;
     if constexpr (H == 7) {

@@ -48,20 +48,20 @@ __global__ void fix_cfgs(R *cfgs, unsigned long long n_cfgs) {
         default: cfg.nm_cnt = (cfg.nm_cnt % 16u); break;
     }
     d_sn(cfg.nm_cnt, cfg.ex);
-    // if (cfg.nm_cnt && cfg.nm[0] != 0xff) {
-    //     auto ub = 0u; // [0,ub] are unique
-    //     for (auto i = 1u; i < cfg.nm_cnt; i++) {
-    //         if (cfg.nm[i] == 0xff)
-    //             break;
-    //         if (cfg.nm[i] != cfg.nm[ub])
-    //             cfg.nm[++ub] = cfg.nm[i];
-    //     }
-    //     cfg.nm_cnt = ub;
-    // } else {
-    //     cfg.nm_cnt = 0;
-    // }
-    // for (auto i = cfg.nm_cnt; i < 16u; i++)
-    //     cfg.nm[i] = 0xff;
+    if (cfg.nm_cnt && cfg.nm[0] != 0xff) {
+        auto ub = 0u; // [0,ub] are unique
+        for (auto i = 1u; i < cfg.nm_cnt; i++) {
+            if (cfg.nm[i] == 0xff)
+                break;
+            if (cfg.nm[i] != cfg.nm[ub])
+                cfg.nm[++ub] = cfg.nm[i];
+        }
+        cfg.nm_cnt = ub;
+    } else {
+        cfg.nm_cnt = 0;
+    }
+    for (auto i = cfg.nm_cnt; i < 16u; i++)
+        cfg.nm[i] = 0xff;
     cfgs[idx] = assemble_R<H>(cfg);
 }
 
@@ -186,23 +186,25 @@ struct FD {
     int fd;
     FD &operator<<(const char *str) {
         auto len = ::write(fd, str, std::strlen(str));
+        if (errno == EINVAL || errno == EBADF)
+            return *this;
         if (len != std::strlen(str))
             THROW("cannot write {} to fd {}: {}", str, fd, std::strerror(errno));
         return *this;
     }
     FD &operator<<(const std::string &str) {
         auto len = ::write(fd, str.c_str(), str.size());
+        if (errno == EINVAL || errno == EBADF)
+            return *this;
         if (len != str.size())
             THROW("cannot write {} to fd {}: {}", str, fd, std::strerror(errno));
         return *this;
     }
     FD &operator<<(std::integral auto v) {
-        *this << std::format("{}", v);
-        return *this;
+        return *this << std::format("{}", v);
     }
     FD &operator<<(double v) {
-        *this << std::format("{:17}", v);
-        return *this;
+        return *this << std::format("{:17}", v);
     }
     void flush() { }
 };
