@@ -49,7 +49,7 @@ spin:
 }
 
 __device__ __forceinline__
-void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
+void cache_frow(frow32_t *dst, const frow32_t *src, unsigned sz) {
     auto d = reinterpret_cast<uint32_t *>(dst);
     auto s = reinterpret_cast<const uint32_t *>(src);
     for (auto i = threadIdx.x; i < sizeof(frow32_t) / sizeof(uint32_t) * sz; i += blockDim.x) {
@@ -63,13 +63,29 @@ void cache_frow(frow32_t *dst, const frow32_t *src, size_t sz) {
 // N is always coalesced
 // L is tiled/coalesced and cached at shmem
 // R is tiled/coalesced and cached at shmem
+//
+// Reverse == false:
+// the (j + i*nR + k*nL*nR)-th block shall process:
+//   f0L[i*Ltile, (i+1)*Ltile) *
+//   f0R[j*Rtile, (j+1)*Rtile) *
+//   cfgs[k*blockDim.x, (k+1)*blockDim.x)
+//
+// Reverse == true:
+// the (i + j*nL + k*nL*nR)-th block shall process:
+//   f0L[i*Ltile, (i+1)*Ltile) *
+//   f0R[j*Rtile, (j+1)*Rtile) *
+//   cfgs[k*blockDim.x, (k+1)*blockDim.x)
+//
 template <unsigned H, int W, bool Reverse>
 __global__
 __launch_bounds__(W, 1536 / W)
 void tiled_row_search(unsigned Ltile, unsigned Rtile, K_PARAMS) {
 
     auto tpb = static_cast<uint64_t>(blockDim.x);
-    if (tpb * blockIdx.x >= n_cfgs) // this block shouldn't even exist!
+    auto nC = (n_cfgs + tpb - 1) / tpb;
+    auto nL = (f0Lsz + Ltile - 1) / Ltile;
+    auto nR = (f0Rsz + Rtile - 1) / Rtile;
+    if (blockIdx.x >= nC * nL * nR) // this block shouldn't even exist!
         return;
 
 #ifdef BMARK
@@ -81,92 +97,54 @@ void tiled_row_search(unsigned Ltile, unsigned Rtile, K_PARAMS) {
 #define AFTER(X)
 #endif
 
-#define CACHE(X) do { \
-        BEFORE(lr); \
-        cache_frow(X ## cache, f0 ## X.data32 + X ## offset, X ## sz); \
-        AFTER(lr); \
-    } while (false)
-
-    frow_info_d f0Y, f0X;
-    uint32_t f0Ysz, f0Xsz;
-    if constexpr (Reverse) {
-        f0Y = f0R, f0Ysz = f0Rsz;
-        f0X = f0L, f0Xsz = f0Lsz;
+    unsigned i, j, k;
+    if constexpr (!Reverse) {
+        j = blockIdx.x % nR;
+        i = blockIdx.x / nR % nL;
+        k = blockIdx.x / nR / nL;
     } else {
-        f0Y = f0L, f0Ysz = f0Lsz;
-        f0X = f0R, f0Xsz = f0Rsz;
+        i = blockIdx.x % nL;
+        j = blockIdx.x / nL % nR;
+        k = blockIdx.x / nL / nR;
     }
-
-    Ltile = min(Ltile, f0Lsz);
-    Rtile = min(Rtile, f0Rsz);
+    auto Lsz = min(Ltile, f0Lsz - i * Ltile);
+    auto Rsz = min(Rtile, f0Rsz - j * Rtile);
 
     extern __shared__ frow32_t shmem[/* Ltile + Rtile */];
     auto *Lcache = shmem;
     auto *Rcache = shmem + Ltile;
 
-    frow32_t *Ycache;
-    frow32_t *Xcache;
-    unsigned Ytile, Xtile;
-    if constexpr (Reverse) {
-        Xcache = Lcache, Ycache = Rcache;
-        Xtile = Ltile, Ytile = Rtile;
-    } else {
-        Ycache = Lcache, Xcache = Rcache;
-        Ytile = Ltile, Xtile = Rtile;
-    }
+    BEFORE(lr);
+    cache_frow(Lcache, f0L.data32 + i * Ltile, Lsz);
+    cache_frow(Rcache, f0R.data32 + j * Rtile, Rsz);
+    __syncthreads();
+    AFTER(lr);
 
-    if (f0Xsz <= Xtile) {
-        auto Xoffset = 0u;
-        auto Xsz = f0Xsz;
-        CACHE(X);
-    }
+    auto idx = threadIdx.x + k * tpb;
+    if (idx < n_cfgs) {
+        BEFORE(n);
+        auto cfg = parse_R<H>(cfgs[idx], ea);
+        AFTER(n);
 
-    for (auto Yoffset = 0u; Yoffset < f0Ysz; Yoffset += Ytile) {
-        auto Ysz = min(Ytile, f0Ysz - Yoffset);
-        CACHE(Y);
-        if (f0Xsz < Xtile)
-            __syncthreads();
+        BEFORE(tile);
+        // profiling showed that ALWAYS put (actual) f0R as outer loop in a tile
+        for (auto r = 0u; r < Rsz; r++) {
+            frow_t fR = Rcache[r];
+            if (fR.shape & ~cfg.empty_area) [[unlikely]] continue;
 
-        for (auto Xoffset = 0u; Xoffset < f0Xsz; Xoffset += Xtile) {
-            auto Xsz = min(Xtile, f0Xsz - Xoffset);
-            if (f0Xsz > Xtile) {
-                CACHE(X);
-                __syncthreads();
+            for (auto l = 0u; l < Lsz; l++) {
+                frow_t fL = Lcache[l];
+                if (fL.shape & ~cfg.empty_area) [[unlikely]] continue;
+                if (fR.shape & fL.shape) [[unlikely]] continue;
+
+                BEFORE(comp);
+                impl<H>(cfg, fL, fR,
+                        ring_buffer, n_outs, n_chunks,
+                        n_reader_chunk, n_writer_chunk);
+                AFTER(comp);
             }
-
-            auto idx = threadIdx.x + tpb * blockIdx.x;
-            if (idx >= n_cfgs) {
-                // this thread still need to exist,
-                // otherwise block-level shmem will go wrong
-                continue;
-            }
-
-            BEFORE(n);
-            auto cfg = parse_R<H>(cfgs[idx], ea);
-            AFTER(n);
-
-            BEFORE(tile);
-            const auto &Lsz = Reverse ? Xsz : Ysz;
-            const auto &Rsz = Reverse ? Ysz : Xsz;
-            // profiling showed that ALWAYS put (actual) f0R as outer loop in a tile
-            for (auto r = 0u; r < Rsz; r++) {
-                frow_t fR = Rcache[r];
-                if (fR.shape & ~cfg.empty_area) [[unlikely]] continue;
-
-                for (auto l = 0u; l < Lsz; l++) {
-                    frow_t fL = Lcache[l];
-                    if (fL.shape & ~cfg.empty_area) [[unlikely]] continue;
-                    if (fR.shape & fL.shape) [[unlikely]] continue;
-
-                    BEFORE(comp);
-                    impl<H>(cfg, fL, fR,
-                            ring_buffer, n_outs, n_chunks,
-                            n_reader_chunk, n_writer_chunk);
-                    AFTER(comp);
-                }
-            }
-            AFTER(tile);
         }
+        AFTER(tile);
     }
 
 #ifdef BMARK

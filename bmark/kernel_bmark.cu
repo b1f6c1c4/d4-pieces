@@ -79,16 +79,6 @@ void launch_fix_cfgs(unsigned H, R *cfgs, unsigned long long n_cfgs, cudaStream_
 
 static KSizing ks;
 
-int default_blocks(const std::string &ty, int threads, uint64_t n_cfgs) {
-    if (ty == "legacy")
-        return (n_cfgs * ks.f0Lsz * ks.f0Rsz + threads - 1) / threads;
-    if (ty == "CR")
-        return n_cfgs * ks.f0Lsz * ((ks.f0Rsz + threads - 1) / threads);
-    if (ty == "CL")
-        return n_cfgs * ks.f0Rsz * ((ks.f0Lsz + threads - 1) / threads);
-    return (n_cfgs + threads - 1) / threads;
-}
-
 int default_shmem(int threads) {
     if (threads <= 96)
         return 7168;
@@ -143,18 +133,12 @@ char *command_generator(const char *text, int state) {
                 if (thread.starts_with(text))
                     matches.push_back(thread);
             }
-        } else if (pos == 3 && (is_lr || is_co || is_legacy)) {
-            // Complete <blocks> (computed from `default_blocks`)
-            if ("auto"s.starts_with(text)) matches.push_back("auto");
-            auto threads = std::stoi(tokens[1]);
-            auto blocks = default_blocks(tokens[0], threads, ks.n_cfgs);
-            matches.push_back(std::to_string(blocks));
-        } else if (pos == 4 && is_lr) {
+        } else if (pos == 3 && is_lr) {
             // Complete <Ltile> (computed from `default_shmem`)
             auto threads = std::stoi(tokens[1]);
             auto Ltile = default_shmem(threads) / sizeof(frow32_t) / 2;
             matches.push_back(std::to_string(Ltile));
-        } else if (pos == 5 && is_lr) {
+        } else if (pos == 4 && is_lr) {
             // Complete <Rtile> (computed from `default_shmem`)
             auto threads = std::stoi(tokens[1]);
             auto Rtile = default_shmem(threads) / sizeof(frow32_t) / 2;
@@ -350,7 +334,7 @@ int main(int argc, char *argv[]) {
         C(cudaMemcpyAsync(&perfs, perf, 4 * sizeof(unsigned long long), cudaMemcpyDeviceToHost, stream));
         C(cudaStreamSynchronize(stream));
         auto oc = std::min(16u, 1536u / kpf.threads) * 84; // max blocks per device
-        auto e = ((kpf.blocks + oc - 1) / oc);
+        auto e = ((kpf.blocks() + oc - 1) / oc);
         // auto tpg = kpb.blocks * kpb.threads;
         // auto iterations = (kpf.n_cfgs + tpg - 1) / tpg;
         auto rt = (kpf.n_cfgs + kpf.threads - 1) / kpf.threads * kpf.threads
@@ -379,7 +363,7 @@ int main(int argc, char *argv[]) {
             case KKind::TiledStandard: csv << "R"; break;
             case KKind::TiledReversed: csv << "L"; break;
         }
-        csv << kpf.blocks << ",";
+        csv << kpf.blocks() << ",";
         csv << kpf.threads << ",";
         csv << kpf.Ltile << ",";
         csv << kpf.Rtile << ",";
@@ -401,9 +385,9 @@ int main(int argc, char *argv[]) {
     KParams kp;
     std::cout << R"(<COMMAND> ::=)" << "\n";
     std::cout << R"(    | "list")" << "\n";
-    std::cout << R"(    | "legacy"    <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
-    std::cout << R"(    | ("CL"|"CR") <threads> [(<blocks>|"auto") [<n_cfg>])" << "\n";
-    std::cout << R"(    | ("L"|"R")   <threads> [(<blocks>|"auto") [<Ltile> <Rtile> [<n_cfg>]])" << "\n";
+    std::cout << R"(    | "legacy"    <threads> [<n_cfg>])" << "\n";
+    std::cout << R"(    | ("CL"|"CR") <threads> [<n_cfg>])" << "\n";
+    std::cout << R"(    | ("L"|"R")   <threads> [<Ltile> <Rtile> [<n_cfg>]])" << "\n";
     while (n_pars == -1) {
         auto input = readline("> ");
         if (input == nullptr)
@@ -432,10 +416,6 @@ int main(int argc, char *argv[]) {
             kp.threads = std::stoull(tokens[1]);
             if (tokens.size() >= 4)
                 kp.n_cfgs = std::stoull(tokens[3]);
-            if (tokens.size() < 3 || tokens[2] == "auto")
-                kp.blocks = default_blocks(tokens[0], kp.threads, kp.n_cfgs);
-            else
-                kp.blocks = std::stoull(tokens[2]);
         } else if (tokens[0] == "CL" || tokens[0] == "CR") {
             kp = KParams{ ks, KKind::CoalescedR };
             if (tokens[0] == "CL")
@@ -443,28 +423,19 @@ int main(int argc, char *argv[]) {
             kp.threads = std::stoull(tokens[1]);
             if (tokens.size() >= 4)
                 kp.n_cfgs = std::stoull(tokens[3]);
-            if (tokens.size() < 3 || tokens[2] == "auto")
-                kp.blocks = default_blocks(tokens[0], kp.threads, kp.n_cfgs);
-            else
-                kp.blocks = std::stoull(tokens[2]);
         } else if (tokens[0] == "L" || tokens[0] == "R") {
             kp = KParams{ ks, KKind::TiledStandard };
             if (tokens[0] == "L")
                 kp.ty = KKind::TiledReversed;
             kp.threads = std::stoull(tokens[1]);
-            if (tokens.size() >= 6)
-                kp.n_cfgs = std::stoull(tokens[5]);
-            if (tokens.size() < 3 || tokens[2] == "auto") {
-                kp.blocks = default_blocks(tokens[0], kp.threads, kp.n_cfgs);
-            } else {
-                kp.blocks = std::stoull(tokens[2]);
-            }
-            if (tokens.size() < 4 || tokens[3] == "auto") {
+            if (tokens.size() >= 5)
+                kp.n_cfgs = std::stoull(tokens[4]);
+            if (tokens.size() < 3) {
                 kp.Ltile = default_shmem(kp.threads) / sizeof(frow32_t) / 2;
                 kp.Rtile = default_shmem(kp.threads) / sizeof(frow32_t) / 2;
             } else {
-                kp.Ltile = std::stoll(tokens[3]);
-                kp.Rtile = std::stoll(tokens[4]);
+                kp.Ltile = std::stoll(tokens[2]);
+                kp.Rtile = std::stoll(tokens[3]);
             }
         } else {
             continue;

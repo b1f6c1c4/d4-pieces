@@ -36,7 +36,6 @@ enum class KKind {
 
 struct KParams : KSizing {
     KKind ty;
-    uint64_t blocks;
     uint32_t threads;
     unsigned Ltile, Rtile;
 
@@ -45,6 +44,13 @@ struct KParams : KSizing {
 #else
     [[nodiscard]] double fom() const;
 #endif
+
+    [[nodiscard]] uint64_t blocks() const;
+
+    [[nodiscard]] operator bool() const {
+        return threads <= 1024u && blocks() <= 2147483647ull;
+    }
+
     [[nodiscard]] std::string to_string(bool full) const;
 };
 

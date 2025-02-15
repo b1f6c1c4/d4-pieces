@@ -29,14 +29,14 @@ void KParamsFull::launch(cudaStream_t stream) {
     ea, f0L, f0Lsz, f0R, f0Rsz ARGS_EX
 
 #define L(k, t) \
-    do { if (height == 8) k<8, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 7) k<7, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 6) k<6, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 5) k<5, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 4) k<4, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 3) k<3, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 2) k<2, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
-    else if (height == 1) k<1, t><<<blocks, threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    do { if (height == 8) k<8, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 7) k<7, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 6) k<6, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 5) k<5, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 4) k<4, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 3) k<3, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 2) k<2, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
+    else if (height == 1) k<1, t><<<blocks(), threads, (Ltile + Rtile) * sizeof(frow32_t), stream>>>(ARGS); \
     else THROW("height {} not supported", height); \
     } while (false)
 
@@ -130,6 +130,22 @@ KParams KSizing::optimize(bool debug) const {
 #endif
 }
 
+uint64_t KParams::blocks() const {
+    switch (ty) {
+        case KKind::Legacy:
+        case KKind::CoalescedR:
+        case KKind::CoalescedL:
+            return n_cfgs * f0Lsz * f0Rsz / threads;
+        case KKind::TiledStandard:
+        case KKind::TiledReversed:
+            return ((n_cfgs + threads - 1) / threads) *
+                ((f0Lsz + Ltile - 1) / Ltile) *
+                ((f0Rsz + Rtile - 1) / Rtile);
+        default:
+            THROW("unknown ty");
+    }
+}
+
 std::string KSizing::to_string() const {
     return std::format("[{:<6}*L{:<5}*R{:<5}]", n_cfgs, f0Lsz, f0Rsz);
 }
@@ -138,16 +154,16 @@ std::string KParams::to_string(bool full) const {
     std::string s;
     switch (ty) {
         case KKind::Legacy:
-            s = std::format("<<<{:11},{:5}>>>[legacy]", blocks, threads);
+            s = std::format("<<<{:11},{:5}>>>[legacy]", blocks(), threads);
             break;
         case KKind::CoalescedR:
         case KKind::CoalescedL:
-            s = std::format("<<<{:10},{:4},{:5}>>>[C{}]", blocks, threads,
+            s = std::format("<<<{:10},{:4},{:5}>>>[C{}]", blocks(), threads,
                     threads * sizeof(frow32_t), ty == KKind::CoalescedL ? 'L' : 'R');
             break;
         case KKind::TiledStandard:
         case KKind::TiledReversed:
-            s = std::format("<<<{:9},{:5},{:4}*{:4}>>>[{}]", blocks, threads,
+            s = std::format("<<<{:9},{:5},{:4}*{:4}>>>[{}]", blocks(), threads,
                     Ltile, Rtile,
                     ty == KKind::TiledReversed ? 'L' : 'R');
             break;
@@ -167,16 +183,16 @@ double KParams::fom() const {
 #endif
     auto oc = std::min(16u, 1536u / threads) * 84; // max blocks per device
     auto util = 1536.0 / ((1536u / threads) * threads);
-    auto e = ((blocks + oc - 1) / oc);
+    auto e = ((blocks() + oc - 1) / oc);
 
     if (ty == KKind::Legacy) {
         auto c = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 2.0e-6;
-        auto v = e * c + blocks * 1e-11;
+        auto v = e * c + blocks() * 1e-11;
 #ifdef BMARK
         if (debug) {
             std::print("<<<{:10},{:5}>>>  [legacy] {:9.2e}*{:3} + {:9.2f} ={:9.2f}\n",
-                    blocks, threads,
-                    c, e, blocks * 1e-11, v);
+                    blocks(), threads,
+                    c, e, blocks() * 1e-11, v);
         }
 #endif
         return v; // + 500e-6;
@@ -184,21 +200,13 @@ double KParams::fom() const {
 
     auto nL = (f0Lsz + Ltile - 1) / Ltile;
     auto nR = (f0Rsz + Rtile - 1) / Rtile;
-    auto nY = ty == KKind::TiledReversed ? nR : nL;
-    auto nX = ty == KKind::TiledReversed ? nL : nR;
-    auto Ytile = ty == KKind::TiledReversed ? Rtile : Ltile;
-    auto Xtile = ty == KKind::TiledReversed ? Ltile : Rtile;
 
-    auto m = 1.0 * nY * Ytile; // load Ycache
-    if (nX == 1) // load Xcache
-        m += Xtile;
-    else
-        m += Xtile * nY * nX * 0.8;
+    auto m = 1.0 * (nL * nR) * (Ltile + Rtile); // load L/Rcache
     if ((Ltile + Rtile) * sizeof(frow32_t) >= 48 * 1024ull) // beyond 48K penalty
         m += 0.58 * ((Ltile + Rtile) * sizeof(frow32_t) - 48 * 1024ull);
     m *= 5e-4 * std::min(16u, 1536u / threads); // per block
 
-    auto c = nY * nX * Ltile * Rtile * 7.2e-200; // compute
+    auto c = nL * nR * Ltile * Rtile * 7.2e-200; // compute
 
     auto n = n_cfgs * 1.5e-5 * ::pow(nL * nR, 0.87); // load cfgs
 
@@ -206,7 +214,7 @@ double KParams::fom() const {
 #ifdef BMARK
     if (debug) {
         std::print("<<<{:9},{:5},{:4}*{:4}>>>   {}{}*{}-{}{}*{}   ({:9.2f} +{:9.2f}*{})*{:3}+{:9.2f}={:9.2f}\n",
-                blocks, threads, Ltile, Rtile,
+                blocks(), threads, Ltile, Rtile,
                 ty == KKind::TiledReversed ? "R" : "L",
                 Ltile, nL,
                 ty == KKind::TiledReversed ? "L" : "R",
