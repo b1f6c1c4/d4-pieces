@@ -132,7 +132,7 @@ std::deque<WL> Sorter::join() {
         }
 #endif
         if (ptr != r.ptr + sz)
-            throw std::runtime_error{ "cvisit_all faulty" };
+            THROW("cvisit_all faulty");
 #ifndef SORTER_NPARF
         });
 #endif
@@ -160,8 +160,7 @@ void Sorter::push(Rg<RX> r) {
         n = (r.len + amount - 1) / amount;
     }
     if (n * amount < r.len || n && (n - 1) * amount >= r.len)
-        throw std::runtime_error{ std::format("internal error: distributing {} to {} with {} each",
-                r.len, n, amount) };
+        THROW("internal error: distributing {} to {} with {} each", r.len, n, amount);
     auto deleter = [=,this] mutable {
         r.dispose();
         std::atomic_ref atm_d{ dedup };

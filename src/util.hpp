@@ -5,6 +5,9 @@
 #else
 #include <iostream>
 #endif
+#ifdef __cpp_exceptions
+#include <stdexcept>
+#endif
 #include <format>
 #include <concepts>
 
@@ -63,5 +66,17 @@ namespace std {
     void print(std::ostream &os, std::format_string<TArgs...> fmt, TArgs && ... args) {
         os << std::format(fmt, std::forward<TArgs>(args)...);
     }
+}
+#endif
+
+#ifdef __cpp_exceptions
+#define THROW(...) throw std::runtime_error{ std::format(__VA_ARGS__) }
+#else
+#define THROW(...) throw_error(__FILE__, __LINE__, __VA_ARGS__)
+template <typename ... TArgs>
+void throw_error(const char *file, int line, std::format_string<TArgs...> fmt, TArgs && ... args) {
+    auto str = std::format(fmt, std::forward<TArgs>(args)...);
+    std::print(std::cerr, "Runtime error at {}:{}\n{}\n", file, line, str);
+    std::abort();
 }
 #endif

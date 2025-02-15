@@ -49,6 +49,6 @@ cmake -S . -B build-x86 \
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION="$LTO" \
         -DCMAKE_CXX_FLAGS="-g $OPT -march=native" \
         -DCMAKE_EXE_LINKER_FLAGS="$ELF" \
-        -DCMAKE_CUDA_FLAGS="-g $OPT $G --device-entity-has-hidden-visibility=true -static-global-template-stub=true -fno-exceptions ${ARGS[*]}" \
+        -DCMAKE_CUDA_FLAGS="-g $OPT $G --device-entity-has-hidden-visibility=true -static-global-template-stub=true ${ARGS[*]}" \
         -G Ninja
 exec cmake --build build-x86 -- "$@"

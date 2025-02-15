@@ -8,7 +8,7 @@ void transfer_frow_to_gpu() {
     C(cudaGetDeviceCount(&n_devices));
     n_devices = min(n_devices, 128);
     if (!n_devices)
-        throw std::runtime_error{ "no CUDA device" };
+        THROW("no CUDA device");
 
     for (auto d = 0; d < n_devices; d++) {
         C(cudaSetDevice(d));

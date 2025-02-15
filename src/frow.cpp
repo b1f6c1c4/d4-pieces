@@ -45,7 +45,7 @@ void compute_frow_on_cpu(bool show_report) {
             for (auto col = 0u; col <= t.right(); col++) {
                 auto v = t.translate_unsafe(col, row).get_value();
                 if (nm >= std::numeric_limits<nm_t>::max())
-                    throw std::runtime_error{ "nm_t too small" };
+                    THROW("nm_t too small");
                 fanout[std::countr_zero(v)].emplace_back(v, nm);
             }
     };
@@ -142,7 +142,7 @@ void compute_frow_on_cpu(bool show_report) {
                 std::print("/{}", fi.sz[i]);
         }
         if (fi.sz[5] != f.size())
-            throw std::runtime_error{ "internal error" };
+            THROW("internal error");
         return fi;
     };
     for (auto ea = 0u; ea < 16u; ea++) {

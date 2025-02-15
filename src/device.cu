@@ -224,11 +224,11 @@ again2:
 
     if (used) { // tail recycle logic
         if (*used < nwc * CYC_CHUNK)
-            throw std::runtime_error{ "internal error" };
+            THROW("internal error");
         if (*used >= (nwc + 1u) * CYC_CHUNK)
-            throw std::runtime_error{ "internal error" };
+            THROW("internal error");
         if (m_scheduled != nwc)
-            throw std::runtime_error{ "internal error" };
+            THROW("internal error");
         if (*used > nwc * CYC_CHUNK) {
             m_initiate_transfer(*used - nwc * CYC_CHUNK, lock_m_works);
         }

@@ -37,7 +37,7 @@ void KParamsFull::launch(cudaStream_t stream) {
     else if (height == 3) k<3, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
     else if (height == 2) k<2, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
     else if (height == 1) k<1, t><<<blocks, threads, sh * sizeof(frow32_t), stream>>>(ARGS); \
-    else throw std::runtime_error{ std::format("height {} not supported", height) }; \
+    else THROW("height {} not supported", height); \
     } while (false)
 
     switch (ty) {
@@ -63,7 +63,7 @@ void KParamsFull::launch(cudaStream_t stream) {
                 L(shmem_len, tiled_row_search, 768 COMMA true);
             break;
         default:
-            throw std::runtime_error{ "unknown ty" };
+            THROW("unknown ty");
     }
 }
 
@@ -153,7 +153,7 @@ std::string KParams::to_string(bool full) const {
                     shmem_len * sizeof(frow32_t), ty == KKind::TiledReversed ? 'L' : 'R');
             break;
         default:
-            throw std::runtime_error{ "unknown ty" };
+            THROW("unknown ty");
     }
     if (full)
         s += KSizing::to_string();

@@ -50,7 +50,7 @@ uint64_t Searcher::step(Shape<8> empty_area) {
             if (ptr[i] != 255)
                 if (arr[ptr[i]]++)
                     std::print("CUDA gives duplicated pieces {}", +ptr[i]);
-                    // throw std::runtime_error{ std::format("CUDA gives duplicated pieces {}", +ptr[i]) };
+                    // THROW("CUDA gives duplicated pieces {}", +ptr[i]);
         auto id = g_nme->name([&](uint64_t m, uint64_t i) {
             return !!arr[g_nme->name_piece(m, i)];
         });

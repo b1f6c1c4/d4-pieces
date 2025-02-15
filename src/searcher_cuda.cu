@@ -131,7 +131,7 @@ void CudaSearcher::search_GPU() {
         });
         for (auto &dev : devs)
             if (!dev)
-                throw std::runtime_error{ "worst nightmare" };
+                THROW("worst nightmare");
         // Device::c is responsible for free up
         devs.front()->dispatch(solutions.front());
         solutions.pop_front();

@@ -5,24 +5,7 @@
 #include <format>
 #include <iostream>
 #include <curand.h>
-
-#define C(ans) { chk_impl((ans), __FILE__, __LINE__); }
-
-static inline void chk_impl(cudaError_t code, const char *file, int line) {
-    if (code != cudaSuccess) {
-        throw std::runtime_error{
-            std::format("CUDA: {}: {} @ {}:{}\n",
-                    cudaGetErrorName(code), cudaGetErrorString(code),
-                    file, line) };
-    }
-}
-
-static inline void chk_impl(curandStatus_t code, const char *file, int line) {
-    if (code != CURAND_STATUS_SUCCESS) {
-        throw std::runtime_error{
-            std::format("curand: {} @ {}:{}\n", (int)code, file, line) };
-    }
-}
+#include "../src/util.cuh"
 
 __device__ unsigned long long r_count, w_count;
 

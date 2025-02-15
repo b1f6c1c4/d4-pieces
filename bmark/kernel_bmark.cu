@@ -14,8 +14,6 @@
 #include <iostream>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <boost/iostreams/device/file_descriptor.hpp>
-#include <boost/iostreams/stream.hpp>
 
 #include "../src/frow.h"
 #include "../src/kernel.h"
@@ -25,13 +23,6 @@
 #include "../src/util.cuh"
 #include "../src/util.hpp"
 #include "../src/sn.cuh"
-
-static inline void chk_impl(curandStatus_t code, const char *file, int line) {
-    if (code != CURAND_STATUS_SUCCESS) {
-        throw std::runtime_error{
-            std::format("curand: {} @ {}:{}\n", (int)code, file, line) };
-    }
-}
 
 // defined in frow.cpp
 extern std::optional<Naming> g_nme;
@@ -191,6 +182,31 @@ void handle_sigint(int sig) {
 
 // }}} ChatGPT generated code
 
+struct FD {
+    int fd;
+    FD &operator<<(const char *str) {
+        auto len = ::write(fd, str, std::strlen(str));
+        if (len != std::strlen(str))
+            THROW("cannot write {} to fd {}: {}", str, fd, std::strerror(errno));
+        return *this;
+    }
+    FD &operator<<(const std::string &str) {
+        auto len = ::write(fd, str.c_str(), str.size());
+        if (len != str.size())
+            THROW("cannot write {} to fd {}: {}", str, fd, std::strerror(errno));
+        return *this;
+    }
+    FD &operator<<(std::integral auto v) {
+        *this << std::format("{}", v);
+        return *this;
+    }
+    FD &operator<<(double v) {
+        *this << std::format("{:17}", v);
+        return *this;
+    }
+    void flush() { }
+};
+
 int main(int argc, char *argv[]) {
     rl_attempted_completion_function = custom_completer;
     rl_variable_bind("show-all-if-ambiguous", "on");
@@ -295,8 +311,7 @@ int main(int argc, char *argv[]) {
     cudaDeviceProp prop;
     C(cudaGetDeviceProperties(&prop, 0));
 
-    boost::iostreams::stream<boost::iostreams::file_descriptor_sink> csv(3,
-            boost::iostreams::close_handle);
+    FD csv{ 3 };
     csv << "n_cfgs,f0Lsz,f0Rsz,reverse,blocks,threads,shmem_len,fom,height,ea,n_outs,clockRate,oc,e,perf_lr,perf_n,perf_tile,compI,ex\n";
 
     auto launch = [&](const KParams &kp) {
@@ -348,7 +363,6 @@ int main(int argc, char *argv[]) {
         running = false;
         C(cudaEventDestroy(start));
         C(cudaEventDestroy(stop));
-        csv << std::setprecision(17);
         csv << kpf.n_cfgs << ",";
         csv << kpf.f0Lsz << ",";
         csv << kpf.f0Rsz << ",";
@@ -373,7 +387,7 @@ int main(int argc, char *argv[]) {
         csv << 1e6 * perf_n / rt / ex / e << ",";
         csv << perf_tile / rt / ex / e << ",";
         csv << 1.0 * perf_comp / perf_tile << ",";
-        csv << ex << std::endl;
+        csv << ex << "\n";
     };
 
     ks = KSizing{ n_cfgs, fanoutL, fanoutR };

@@ -3,7 +3,7 @@
 #include <cuda.h>
 #include <format>
 #include <iostream>
-#include <stdexcept>
+#include "util.hpp"
 
 /**
  * 128 resident grids / device (Concurrent Kernel Execution)
@@ -24,10 +24,9 @@
 
 inline void chk_impl(cudaError_t code, const char *file, int line) {
     if (code != cudaSuccess) {
-        throw std::runtime_error{
-            std::format("CUDA: {}: {} @ {}:{}\n",
-                    cudaGetErrorName(code), cudaGetErrorString(code),
-                    file, line) };
+        THROW("CUDA: {}: {} @ {}:{}\n",
+                cudaGetErrorName(code), cudaGetErrorString(code),
+                file, line);
     }
 }
 
@@ -36,7 +35,14 @@ inline void chk_impl(CUresult code, const char *file, int line) {
     cuGetErrorName(code, &pn);
     cuGetErrorString(code, &ps);
     if (code != CUDA_SUCCESS) {
-        throw std::runtime_error{
-            std::format("CUDA Driver: {}: {} @ {}:{}\n", pn, ps, file, line) };
+        THROW("CUDA Driver: {}: {} @ {}:{}\n", pn, ps, file, line);
     }
 }
+
+#ifdef CURAND_H_
+inline void chk_impl(curandStatus_t code, const char *file, int line) {
+    if (code != CURAND_STATUS_SUCCESS) {
+        THROW("curand: {} @ {}:{}\n", (int)code, file, line);
+    }
+}
+#endif

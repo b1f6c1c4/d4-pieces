@@ -101,12 +101,12 @@ total: {} B
         fd = ::open(fn, O_RDWR | O_CREAT | O_NOATIME,
                 S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
         if (fd == -1)
-            throw std::runtime_error{ "open(2): "s + std::strerror(errno) };
+            THROW("open(2): {}", std::strerror(errno));
 
         // verify file size
         auto operate_at = [&](bool w, uint64_t pos) {
             if (::lseek(fd, pos, SEEK_SET) == -1)
-                throw std::runtime_error{ "lseek(2): "s + std::strerror(errno) };
+                THROW("lseek(2): {}", std::strerror(errno));
             char buf{};
             switch (w ? ::write(fd, &buf, 1) : ::read(fd, &buf, 1)) {
                 case 1:
@@ -115,20 +115,20 @@ total: {} B
                     return false;
                 case -1:
                 default:
-                    throw std::runtime_error{ (w ? "write(2): "s : "read(2): "s) + std::strerror(errno) };
+                    THROW("{}(2): {}", w ? "write" : "read", std::strerror(errno));
             }
         };
         if (operate_at(false, mem_sz))
-            throw std::runtime_error{ "file too long" };
+            THROW("file too long");
         if (operate_at(false, 0) && !operate_at(false, mem_sz - 1))
-            throw std::runtime_error{ "file too short" };
+            THROW("file too short");
         if (!operate_at(false, 0)) // pad to mem_sz
             operate_at(true, mem_sz - 1);
         operate_at(false, 0);
 
         auto m = ::mmap(nullptr, mem_sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED)
-            throw std::runtime_error{ std::format("mmap(2): {} (mem_sz={}GiB)", std::strerror(errno), mem_sz / 1024.0 / 1024.0 / 1024.0) };
+            THROW("mmap(2): {} (mem_sz={}GiB)", std::strerror(errno), mem_sz / 1024.0 / 1024.0 / 1024.0);
         auto mc = reinterpret_cast<unsigned char *>(m);
         cfgs = reinterpret_cast<config_descriptor *>(mc);
         nmes = reinterpret_cast<uint64_t *>(mc += cfgs_size);

@@ -44,7 +44,7 @@ static void launch(unsigned b, unsigned t, unsigned height,
     else if (height == 1)
         kernel<1><<<b, t>>>(std::forward<TArgs>(args)...);
     else
-        throw std::runtime_error{ std::format("height {} not supported", height) };
+        THROW("height {} not supported", height);
 }
 
 int main(int argc, char *argv[]) {

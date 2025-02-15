@@ -9,17 +9,6 @@
 
 #include "../src/sn.cuh"
 
-#define C(ans) { chk_impl((ans), __FILE__, __LINE__); }
-
-static inline void chk_impl(cudaError_t code, const char *file, int line) {
-    if (code != cudaSuccess) {
-        throw std::runtime_error{
-            std::format("CUDA: {}: {} @ {}:{}\n",
-                    cudaGetErrorName(code), cudaGetErrorString(code),
-                    file, line) };
-    }
-}
-
 __device__ __forceinline__
 void d_push_slow(uint32_t &cnt, uint32_t v[4], uint32_t nv) {
     auto mask = __vcmpne4(nv, 0xffffffffu);
