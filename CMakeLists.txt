@@ -64,6 +64,12 @@ else()
 
     add_executable(enum src/enum.cpp src/Shape.cpp src/Group.cpp)
 
+    add_executable(radix
+        bmark/radix.cu)
+    target_compile_definitions(radix PUBLIC BMARK)
+    target_link_libraries(radix PRIVATE cuda)
+    target_link_libraries(radix PRIVATE curand)
+
     add_executable(kernel
         bmark/kernel_bmark.cu
         src/frow.cpp
@@ -75,7 +81,6 @@ else()
         src/Shape.cpp)
     target_compile_definitions(kernel PUBLIC BMARK)
     target_link_libraries(kernel PRIVATE cuda)
-    target_link_libraries(kernel PRIVATE boost_iostreams)
     target_link_libraries(kernel PRIVATE curand)
     target_link_libraries(kernel PRIVATE readline)
     target_compile_options(kernel PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--keep>)
