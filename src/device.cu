@@ -43,7 +43,7 @@ void Device::c_entry() {
     C(cudaStreamCreateWithFlags(&c_stream, cudaStreamNonBlocking));
 
     C(cudaMallocAsync(&n_outs, sizeof(unsigned long long), c_stream));
-    C(cudaMemsetAsync(n_outs, 0, 2 * sizeof(unsigned long long), c_stream));
+    C(cudaMemsetAsync(n_outs, 0, sizeof(unsigned long long), c_stream));
 
     std::print("dev#{}.c: allocating {} * {}B = {}B ring buffer\n",
             dev, n_chunks, display(CYC_CHUNK * sizeof(RX)),
@@ -209,6 +209,9 @@ again2:
         }
     }
     if (local) {
+        // note: since xlock_m_works is NOT locked here,
+        // other threads (especially the monitor thread)
+        // may see a smaller-than-expected n_reader_chunk value
         n_reader_chunk.fetch_add(local, cuda::memory_order_release);
     }
 
@@ -332,7 +335,8 @@ unsigned Device::print_stats() const {
         auto nwc = n_writer_chunk.load(cuda::memory_order_relaxed);
 
         boost::shared_lock lock_m_works{ mtx_m };
-        auto nrc = n_reader_chunk.load(cuda::memory_order_relaxed);
+        // do no read nrc since m_entry doesn't wlock during nrc update
+        auto nrc = m_scheduled - m_works.size();
         for (auto i = 0ull; i < n_chunks; i++) {
             auto c = i < nrc ? i + n_chunks : i;
             if (c < nrc)

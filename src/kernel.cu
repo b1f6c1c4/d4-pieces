@@ -143,7 +143,7 @@ uint64_t KParams::blocks() const {
         case KKind::Legacy:
         case KKind::CoalescedR:
         case KKind::CoalescedL:
-            return n_cfgs * f0Lsz * f0Rsz / threads;
+            return (n_cfgs * f0Lsz * f0Rsz + threads - 1) / threads;
         case KKind::TiledStandard:
         case KKind::TiledReversed:
             return ((n_cfgs + threads - 1) / threads) *
@@ -194,16 +194,7 @@ double KParams::fom() const {
     auto e = ((blocks() + oc - 1) / oc);
 
     if (ty == KKind::Legacy || ty == KKind::CoalescedR || ty == KKind::CoalescedL) {
-        auto c = (1.0 + ((threads + 31) / 32 * 32) * 1e-3) * 2.0e-6;
-        auto v = e * c + blocks() * 1e-11;
-#ifdef BMARK
-        if (debug) {
-            std::print("<<<{:10},{:5}>>>  [legacy] {:9.2e}*{:3} + {:9.2f} ={:9.2f}\n",
-                    blocks(), threads,
-                    c, e, blocks() * 1e-11, v);
-        }
-#endif
-        return v; // + 500e-6;
+        return 2e-5 * e;
     }
 
     auto nL = (f0Lsz + Ltile - 1) / Ltile;
@@ -214,7 +205,7 @@ double KParams::fom() const {
         m += 0.58 * ((Ltile + Rtile) * sizeof(frow32_t) - 48 * 1024ull);
     m *= 5e-4 * std::min(16u, 1536u / threads); // per block
 
-    auto c = nL * nR * Ltile * Rtile * 7.2e-200; // compute
+    auto c = n_cfgs * f0Lsz * f0Rsz * 2.5e-6; // compute
 
     auto n = n_cfgs * 1.5e-5 * ::pow(nL * nR, 0.87); // load cfgs
 
@@ -230,5 +221,5 @@ double KParams::fom() const {
                 m, c, util, e, n, v);
     }
 #endif
-    return v * 1e-6; // + 500e-6;
+    return v * 1e-6;
 }
