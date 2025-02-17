@@ -145,6 +145,11 @@ std::deque<WL> Sorter::join() {
     return answer;
 }
 
+uint64_t Sorter::get_pending() const {
+    std::atomic_ref atm_p{ pending };
+    return atm_p.load(std::memory_order_relaxed);
+}
+
 #define N_PAGES 48
 #define N (N_PAGES * 4096ull / sizeof(RX))
 

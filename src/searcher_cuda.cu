@@ -58,8 +58,8 @@ void CudaSearcher::search_GPU() {
             last = sorter.print_stats();
             for (auto &dev : devs)
                 last += dev->print_stats();
-            std::print(std::cerr, "\33[37mheight = {}\33[K\33[0m\33[E\33[J\n\n", height);
-            last += 3;
+            std::print(std::cerr, "\33[37mheight = {}\33[K\33[0m\33[E\33[J\n", height);
+            last += 2;
         }
     } };
 

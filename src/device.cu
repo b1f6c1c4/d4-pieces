@@ -161,8 +161,6 @@ again:
     cv.notify_all();
 }
 
-#define MAX_DtoH 8
-
 void Device::m_entry() {
     pthread_setname_np(pthread_self(), std::format("dev#{}.m", dev).c_str());
     C(cudaSetDevice(dev));
@@ -202,21 +200,20 @@ again2:
             break;
         }
     }
-    if (local) {
-        // note: since xlock_m_works is NOT locked here,
-        // other threads (especially the monitor thread)
-        // may see a smaller-than-expected n_reader_chunk value
-        n_reader_chunk.fetch_add(local, cuda::memory_order_release);
-    }
+    // note: since xlock_m_works is NOT locked here,
+    // other threads (especially the monitor thread)
+    // may see a smaller-than-expected n_reader_chunk value
+    auto nrc = n_reader_chunk.fetch_add(local, cuda::memory_order_release) + local;
 
     // recycle logic
     auto nwc = n_writer_chunk.load(cuda::memory_order_acquire);
-    while (m_scheduled < nwc && m_works.size() < MAX_DtoH) {
+    while (m_scheduled < nwc) {
+        if (m_works.size() >= 4 ||
+                sorter.get_pending() >= 8 && nwc - nrc + 8 <= n_chunks) {
+            std::this_thread::sleep_for(5ms);
+            goto again2;
+        }
         m_initiate_transfer(CYC_CHUNK, lock_m_works);
-    }
-    if (m_works.size() >= MAX_DtoH) {
-        std::this_thread::sleep_for(5ms);
-        goto again2;
     }
 
     if (used) { // tail recycle logic
@@ -358,8 +355,8 @@ unsigned Device::print_stats() const {
         if (!c_works.empty()) {
             auto &work = c_works.front();
             lines++;
-            ss << std::format("\33[K\n\33[37mdev#{} {:08b}{}]",
-                        dev, work.pos, work.kp.to_string(true));
+            ss << std::format("\33[K\n\33[37m       {:08b}{}]",
+                        work.pos, work.kp.to_string(true));
             if (c_works.size() >= 1)
                 ss << " + W" << c_works.size() - 1;
         }

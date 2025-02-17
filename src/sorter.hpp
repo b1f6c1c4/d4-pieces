@@ -12,6 +12,7 @@ struct Sorter {
     ~Sorter();
 
     void push(Rg<RX> r);
+    [[nodiscard]] uint64_t get_pending() const;
     [[nodiscard]] std::deque<WL> join();
 
     unsigned print_stats() const;
