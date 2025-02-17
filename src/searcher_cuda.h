@@ -29,8 +29,6 @@ struct CudaSearcher {
 
     void search_GPU();
 
-    Rg<R> write_solution(unsigned pos, size_t sz);
-
 private:
     std::deque<WL> solutions;
 
@@ -38,5 +36,3 @@ private:
 
     void free();
 };
-
-void show_devices();

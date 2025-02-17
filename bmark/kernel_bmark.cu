@@ -321,10 +321,10 @@ int main(int argc, char *argv[]) {
         cudaEvent_t start, stop;
         C(cudaEventCreate(&start));
         C(cudaEventCreate(&stop));
-        C(cudaEventRecord(start));
+        C(cudaEventRecord(start, stream));
         kpf.launch(stream);
         C(cudaPeekAtLastError());
-        C(cudaEventRecord(stop));
+        C(cudaEventRecord(stop, stream));
         C(cudaEventSynchronize(stop));
         float ms;
         C(cudaEventElapsedTime(&ms, start, stop));

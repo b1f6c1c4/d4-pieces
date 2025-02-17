@@ -139,6 +139,7 @@ again:
             C(cudaEventCreateWithFlags(&work.ev_m, cudaEventDisableTiming));
             C(cudaEventRecord(work.ev_m, c_stream));
             kpf.launch(c_stream);
+            C(cudaPeekAtLastError());
             C(cudaEventCreateWithFlags(&work.ev_c, cudaEventDisableTiming));
             C(cudaEventRecord(work.ev_c, c_stream));
 

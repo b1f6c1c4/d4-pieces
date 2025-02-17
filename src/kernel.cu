@@ -128,12 +128,14 @@ KParams KSizing::optimize(bool debug) const {
 #ifdef BMARK
     return pars;
 #else
+#ifdef VERBOSE
     if (debug) {
         std::print("kernel#optimize: best kernel params for {} are:\n",
                 to_string());
         for (auto i = 0zu; i < pars.size() && i < 10zu; i++)
             std::print("      #{}\n", pars[i].to_string(false));
     }
+#endif
     return pars.front();
 #endif
 }

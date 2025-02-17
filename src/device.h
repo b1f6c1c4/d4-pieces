@@ -31,8 +31,7 @@ class Device {
         }
 
         // c:cudaMallocAsync c:cudaFree
-        // __device__
-        R *p;
+        R *p; // __device__
     };
     struct Output : Rg<RX> {
     };
@@ -84,7 +83,7 @@ class Device {
     // c:cudaMallocAsync c:cudaFree
     unsigned long long *n_outs{}; // __device__
 
-    mutable boost::shared_mutex mtx_c; // must not hold mtx
+    mutable boost::shared_mutex mtx_c;
     cudaStream_t c_stream;
     // protected by mtx_c {
     std::deque<Input> c_works{}; // after dispatching

@@ -1,79 +1,13 @@
 #include "searcher_cuda.h"
-#include "util.hpp"
-#include "util.cuh"
-#include "frow.h"
-#include "device.h"
-#include "sn.cuh"
 
-#include <cuda.h>
-#include <cuda/atomic>
 #include <linux/kcmp.h>
-#include <sys/syscall.h>
-#include <algorithm>
-#include <chrono>
-#include <cstring>
+#include <vector>
 #include <memory>
-#include <deque>
-#include <iostream>
-#include <format>
-#include <unistd.h>
-#include <cstdio>
+#include <thread>
 
-template <unsigned H>
-__global__
-void d_row_search(
-        // output ring buffer
-        RX                 *ring_buffer, // __device__
-        unsigned long long *n_outs, // __device__
-        unsigned long long n_chunks,
-        unsigned long long *n_reader_chunk, // __managed__, HtoD
-        unsigned long long *n_writer_chunk, // __managed__, DtoH
-        // input vector
-        const R *cfgs, const uint64_t n_cfgs,
-        // constants
-        uint8_t ea,
-        const frow_t *f0L, const uint32_t f0Lsz,
-        const frow_t *f0R, const uint32_t f0Rsz) {
-    auto idx = threadIdx.x + static_cast<uint64_t>(blockIdx.x) * blockDim.x;
-    if (idx >= n_cfgs * f0Lsz * f0Rsz) [[unlikely]] return;
-    auto r = cfgs[idx / f0Rsz / f0Lsz];
-    auto fL = f0L[idx / f0Rsz % f0Lsz];
-    auto fR = f0R[idx % f0Rsz];
-    auto cfg = parse_R<H>(r, ea);
-    if (fL.shape & ~cfg.empty_area) [[unlikely]] return;
-    if (fR.shape & ~cfg.empty_area) [[unlikely]] return;
-    if (fL.shape & fR.shape) [[unlikely]] return;
-    d_push(cfg.nm_cnt, cfg.ex, fL.nm0123);
-    d_push(cfg.nm_cnt, cfg.ex, fR.nm0123);
-    d_sn(cfg.nm_cnt, cfg.ex);
-    if (!d_uniq_chk(cfg.nm_cnt, cfg.ex)) [[unlikely]] return;
-    cfg.empty_area &= ~fL.shape;
-    cfg.empty_area &= ~fR.shape;
-    auto ocfg = assemble_R<H - 1>(cfg);
-    auto out = __nv_atomic_fetch_add(n_outs, 1,
-            __NV_ATOMIC_ACQUIRE, __NV_THREAD_SCOPE_DEVICE);
-spin:
-    auto nrc = __nv_atomic_load_n(n_reader_chunk,
-            __NV_ATOMIC_ACQUIRE, __NV_THREAD_SCOPE_SYSTEM);
-    if (out >= (nrc + n_chunks - 1u) * CYC_CHUNK) {
-        __nanosleep(1000000);
-        goto spin;
-    }
-    ring_buffer[out % (n_chunks * CYC_CHUNK)] = ocfg; // slice
-    if (out && out % CYC_CHUNK == 0) {
-        auto tgt = out / CYC_CHUNK;
-        auto src = tgt - 1;
-        while (!__nv_atomic_compare_exchange_n(
-                    n_writer_chunk,
-                    &src, tgt, /* ignored */ true,
-                    __NV_ATOMIC_RELEASE, __NV_ATOMIC_RELAXED,
-                    __NV_THREAD_SCOPE_SYSTEM)) {
-            if (src >= tgt) __builtin_unreachable();
-            src = tgt - 1;
-            __nanosleep(1000000);
-        }
-    }
-}
+#include "device.h"
+#include "frow.h"
+#include "util.hpp"
 
 CudaSearcher::CudaSearcher(uint64_t empty_area)
     : solutions{}, height{ (std::bit_width(empty_area) + 8u - 1u) / 8u } {
@@ -107,6 +41,10 @@ void CudaSearcher::search_GPU() {
     std::jthread monitor{ [&,this] {
         pthread_setname_np(pthread_self(), "monitor");
         auto sep = syscall(SYS_kcmp, getpid(), getpid(), KCMP_FILE, 1, 2) != 0;
+#ifndef VERBOSE
+        if (!sep)
+            return;
+#endif
         auto last = 0u;
         using namespace std::chrono_literals;
         std::unique_lock lock{ mtx };

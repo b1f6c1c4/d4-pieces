@@ -27,6 +27,9 @@ struct Rg {
     static Rg<T> make_cpu(size_t len, bool page = false);
     static Rg<T> make_managed(size_t len);
     static Rg<T> make_cuda_mlocked(size_t len, bool direct = false);
+
+    auto begin() { return ptr; }
+    auto end() { return ptr + len; }
 };
 
 struct WL : Rg<R> {
