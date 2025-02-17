@@ -99,6 +99,8 @@ class Device {
     void m_callback(Output *pwork);
     friend void Device_callback_helper(void *raw);
 
+    mutable int print_stats_dot{};
+
 public:
     Device(int d, unsigned h, Sorter &s);
     ~Device();

@@ -68,7 +68,8 @@ Rg<T> Rg<T>::make_cuda_mlocked(size_t len, bool direct) {
         C(cudaHostAlloc(&r.ptr, len * sizeof(T), cudaHostAllocWriteCombined));
         return r;
     } else {
-        Rg<T> r{ new T[len], len, RgType::CUDA_HOST_UNREGISTER_DELETE };
+        auto r = make_cpu(len, true);
+        r.ty = RgType::CUDA_HOST_UNREGISTER_DELETE;
         C(cudaHostRegister(r.ptr, len * sizeof(T), cudaHostRegisterReadOnly));
         return r;
     }

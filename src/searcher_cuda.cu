@@ -64,6 +64,7 @@ void CudaSearcher::search_GPU() {
             std::print(std::cerr, "\33[37mheight = {}\33[K\33[0m\33[E\33[J\n", height);
             last += 2;
         }
+        std::print(std::cerr, "\33[E** height={} size={} **\33[J\n\n", height, size());
     } };
 
     while (!solutions.empty()) {

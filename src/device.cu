@@ -209,8 +209,7 @@ again2:
     // recycle logic
     auto nwc = n_writer_chunk.load(cuda::memory_order_acquire);
     while (m_scheduled < nwc) {
-        if (m_works.size() >= 4 ||
-                sorter.get_pending() >= 8 && nwc - nrc + 8 <= n_chunks) {
+        if (m_works.size() + sorter.get_pending() / CYC_CHUNK >= 8 && nwc - nrc + 8 <= n_chunks) {
             std::this_thread::sleep_for(5ms);
             goto again2;
         }
@@ -326,6 +325,7 @@ unsigned Device::print_stats() const {
         lock.unlock();
         auto nwc = n_writer_chunk.load(cuda::memory_order_relaxed);
 
+        boost::shared_lock lock_c_works{ mtx_c };
         boost::shared_lock lock_m_works{ mtx_m };
         // do no read nrc since m_entry doesn't wlock during nrc update
         auto nrc = m_scheduled - m_works.size();
@@ -340,18 +340,18 @@ unsigned Device::print_stats() const {
                     ss << "\33[95mR";
             } else if (c < nwc)
                 ss << "\33[90m-";
-            else if (c == nwc)
-                ss << "\33[36mW";
-            else
+            else if (c == nwc) {
+                if (c_works.empty())
+                    ss << "\33[96mW";
+                else
+                    ss << "\33[36mW";
+            } else
                 ss << " ";
         }
         lock_m_works.unlock();
 
         ss << "\33[37m] ";
-
-        boost::shared_lock lock_c_works{ mtx_c };
-        ss << std::format("[E{:7}]", display(c_fom_done));
-        ss << std::format(" ETC{:7}", display(get_etc()));
+        ss << std::format("[{:7}/{:7}]", display(c_fom_done), display(get_etc()));
 
         lock.lock();
         if (!xc_queue.empty())
@@ -362,7 +362,10 @@ unsigned Device::print_stats() const {
         if (!c_works.empty()) {
             auto &work = c_works.front();
             lines++;
-            ss << std::format("\33[K\n\33[37m       {:08b}{}]",
+            ss << "\33[K\n\33[37m";
+            for (auto i = 0; i < 4; i++)
+                ss << (i == print_stats_dot ? '.' : ' ');
+            ss << std::format(" [{:08b}{}]",
                         work.pos, work.kp.to_string(true));
             if (c_works.size() >= 1)
                 ss << " + W" << c_works.size() - 1;
@@ -371,6 +374,8 @@ unsigned Device::print_stats() const {
     lock.unlock();
     ss << "\33[K\33[0m\n";
     std::cerr << ss.str();
+    print_stats_dot++;
+    print_stats_dot %= 4;
     return lines;
 }
 
