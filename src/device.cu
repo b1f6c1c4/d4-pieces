@@ -261,10 +261,10 @@ void Device::m_initiate_transfer(uint64_t sz, boost::upgrade_lock<boost::upgrade
             dev, sz == CYC_CHUNK ? "" : "tail ",
             m_scheduled, count_digits(n_chunks),
             n_chunks, sz, display(sz * sizeof(RX)));
-    Output *pwork;
+    auto *pwork = new Output{ Rg<RX>::make_cuda_mlocked(sz, true, false) };
     {
         boost::upgrade_to_unique_lock xlock_m_works{ lock };
-        pwork = m_works.emplace_back(new Output{ Rg<RX>::make_cpu(sz) });
+        m_works.emplace_back(pwork);
         m_scheduled++;
     }
     C(cudaMemcpyAsync(pwork->ptr,

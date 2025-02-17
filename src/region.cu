@@ -62,15 +62,17 @@ Rg<T> Rg<T>::make_managed(size_t len) {
 }
 
 template <typename T>
-Rg<T> Rg<T>::make_cuda_mlocked(size_t len, bool direct) {
+Rg<T> Rg<T>::make_cuda_mlocked(size_t len, bool direct, bool h2d) {
     if (direct) {
         Rg<T> r{ nullptr, len, RgType::CUDA_FREE_HOST };
-        C(cudaHostAlloc(&r.ptr, len * sizeof(T), cudaHostAllocWriteCombined));
+        C(cudaHostAlloc(&r.ptr, len * sizeof(T), h2d
+                    ? cudaHostAllocWriteCombined : cudaHostAllocDefault));
         return r;
     } else {
         auto r = make_cpu(len, true);
         r.ty = RgType::CUDA_HOST_UNREGISTER_DELETE;
-        C(cudaHostRegister(r.ptr, len * sizeof(T), cudaHostRegisterReadOnly));
+        C(cudaHostRegister(r.ptr, len * sizeof(T), h2d
+                    ? cudaHostRegisterReadOnly : cudaHostRegisterDefault));
         return r;
     }
 }
@@ -83,5 +85,5 @@ template Rg<R> Rg<R>::make_cpu(size_t len, bool page);
 template Rg<RX> Rg<RX>::make_cpu(size_t len, bool page);
 template Rg<R> Rg<R>::make_managed(size_t len);
 template Rg<RX> Rg<RX>::make_managed(size_t len);
-template Rg<R> Rg<R>::make_cuda_mlocked(size_t len, bool direct);
-template Rg<RX> Rg<RX>::make_cuda_mlocked(size_t len, bool direct);
+template Rg<R> Rg<R>::make_cuda_mlocked(size_t len, bool direct, bool h2d);
+template Rg<RX> Rg<RX>::make_cuda_mlocked(size_t len, bool direct, bool h2d);

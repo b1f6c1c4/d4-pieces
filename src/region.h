@@ -26,7 +26,7 @@ struct Rg {
 
     static Rg<T> make_cpu(size_t len, bool page = false);
     static Rg<T> make_managed(size_t len);
-    static Rg<T> make_cuda_mlocked(size_t len, bool direct = false);
+    static Rg<T> make_cuda_mlocked(size_t len, bool direct = false, bool h2d = true);
 
     auto begin() { return ptr; }
     auto end() { return ptr + len; }
@@ -46,5 +46,5 @@ extern template Rg<R> Rg<R>::make_cpu(size_t len, bool page);
 extern template Rg<RX> Rg<RX>::make_cpu(size_t len, bool page);
 extern template Rg<R> Rg<R>::make_managed(size_t len);
 extern template Rg<RX> Rg<RX>::make_managed(size_t len);
-extern template Rg<R> Rg<R>::make_cuda_mlocked(size_t len, bool direct);
-extern template Rg<RX> Rg<RX>::make_cuda_mlocked(size_t len, bool direct);
+extern template Rg<R> Rg<R>::make_cuda_mlocked(size_t len, bool direct, bool h2d);
+extern template Rg<RX> Rg<RX>::make_cuda_mlocked(size_t len, bool direct, bool h2d);

@@ -44,10 +44,6 @@ void CudaSearcher::search_GPU() {
     std::jthread monitor{ [&,this] {
         pthread_setname_np(pthread_self(), "monitor");
         auto sep = syscall(SYS_kcmp, getpid(), getpid(), KCMP_FILE, 1, 2) != 0;
-#ifndef VERBOSE
-        if (!sep)
-            return;
-#endif
         auto last = 0u;
         using namespace std::chrono_literals;
         std::unique_lock lock{ mtx };
