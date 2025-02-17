@@ -69,12 +69,6 @@ again:
         if (err == cudaErrorNotReady)
             continue;
         C(err);
-        {
-            // since indefinite long time might have passed before actual
-            // kernel start and ev_m check, this is only a rough estimate
-            boost::upgrade_to_unique_lock xlock_c_work{ lock_c_works };
-            work.est_start_time = std::chrono::steady_clock::now();
-        }
         C(cudaEventDestroy(work.ev_m));
         work.ev_m = cudaEvent_t{};
         if (!work.device_accessible()) {
@@ -105,7 +99,6 @@ again:
             boost::upgrade_to_unique_lock xlock_c_work{ lock_c_works };
             c_works.pop_front();
             c_fom_done += work.kp.fom();
-            c_actual_done += work.elapsed();
         }
         std::print("dev#{}.c: {}B ({} entries) device mem freed\n",
                 dev, display(work.len * sizeof(R)), work.len);
@@ -308,14 +301,8 @@ void Device::wait() {
 }
 
 double Device::get_etc() const {
-    boost::shared_lock lock_c_works{ mtx_c };
-    if (c_works.empty())
-        return 0;
-
-    auto &work = c_works.front();
-    auto el = work.elapsed();
     auto q = c_fom_queued.load(std::memory_order_relaxed);
-    return q + c_sum_fom - std::min(work.kp.fom(), el);
+    return q + c_sum_fom;
 }
 
 unsigned Device::print_stats() const {
@@ -359,8 +346,7 @@ unsigned Device::print_stats() const {
         ss << "\33[37m] ";
 
         boost::shared_lock lock_c_works{ mtx_c };
-        ss << std::format("[E{:7} A{:7}]",
-                display(c_fom_done), display(c_actual_done));
+        ss << std::format("[E{:7}]", display(c_fom_done));
         ss << std::format(" ETC{:7}", display(get_etc()));
 
         lock.lock();
@@ -372,8 +358,8 @@ unsigned Device::print_stats() const {
         if (!c_works.empty()) {
             auto &work = c_works.front();
             lines++;
-            ss << std::format("\33[K\n\33[37mdev#{} {:08b}{}/{:7}]",
-                        dev, work.pos, work.kp.to_string(true), display(work.elapsed()));
+            ss << std::format("\33[K\n\33[37mdev#{} {:08b}{}]",
+                        dev, work.pos, work.kp.to_string(true));
             if (c_works.size() >= 1)
                 ss << " + W" << c_works.size() - 1;
         }

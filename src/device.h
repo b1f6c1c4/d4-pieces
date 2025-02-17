@@ -20,15 +20,10 @@ class Device {
         cudaEvent_t ev_m, ev_c;
         unsigned szid;
         KParams kp;
-        std::chrono::steady_clock::time_point est_start_time; // rough estimate
 
         Input(WL work, int dev, unsigned height);
         Input(const Input &other) = default;
         Input(Input &&other) = default;
-        [[nodiscard]] double elapsed() const {
-            return std::chrono::duration_cast<std::chrono::duration<double>, double, std::ratio<1>>(
-                    std::chrono::steady_clock::now() - est_start_time).count();
-        }
 
         // c:cudaMallocAsync c:cudaFree
         R *p; // __device__
