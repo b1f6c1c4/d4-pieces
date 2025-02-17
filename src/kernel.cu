@@ -16,6 +16,9 @@
 #define CCMMA ,
 
 void KParamsFull::launch(cudaStream_t stream) {
+    if (!blocks())
+        return;
+
 #ifdef BMARK
 #define ARGS_EX , perf
 #else
@@ -118,6 +121,12 @@ KParams KSizing::optimize(bool debug) const {
             for (auto i = 0; i < 8; i++) {
                 if ((Ltile + Rtile) * sizeof(frow32_t) > known_shmem_b[i])
                     continue;
+
+                // FIXME: this is a cursed configuration
+                // always give cudaErrorInvalidValue in production
+                if (f0Lsz == 3313 && f0Rsz == 794 && known_t[i] == 768)
+                    continue;
+
                 pars.emplace_back(*this, KKind::TiledStandard,
                         known_t[i], Ltile, Rtile);
                 pars.emplace_back(*this, KKind::TiledReversed,
