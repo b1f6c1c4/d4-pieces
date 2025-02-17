@@ -61,6 +61,7 @@ namespace std {
     template <typename ... TArgs>
     void print(std::format_string<TArgs...> fmt, TArgs && ... args) {
         std::cout << std::format(fmt, std::forward<TArgs>(args)...);
+        std::cout.flush();
     }
     template <typename ... TArgs>
     void print(std::ostream &os, std::format_string<TArgs...> fmt, TArgs && ... args) {

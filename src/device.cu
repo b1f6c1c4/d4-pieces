@@ -177,10 +177,11 @@ void Device::m_entry() {
 
     auto tailed = false;
 
+    std::optional<uint64_t> used{};
 again:
     cv.wait_for(lock, 50ms, [this]{ return xc_used.has_value(); });
-    auto used = std::move(xc_used);
-    if (xc_used) {
+    if (!tailed && xc_used) {
+        used = xc_used;
         tailed = true;
         xc_used.reset();
     }
@@ -218,20 +219,26 @@ again2:
 
     if (used) { // tail recycle logic
         if (*used < nwc * CYC_CHUNK)
-            THROW("internal error");
+            THROW("internal error {} < {} * {}", *used, nwc, CYC_CHUNK);
         if (*used >= (nwc + 1u) * CYC_CHUNK)
-            THROW("internal error");
+            THROW("internal error {} >= {} * {}", *used, (nwc + 1), CYC_CHUNK);
         if (m_scheduled != nwc)
-            THROW("internal error");
+            THROW("internal error {} != {}", m_scheduled, nwc);
         if (*used > nwc * CYC_CHUNK) {
             m_initiate_transfer(*used - nwc * CYC_CHUNK, lock_m_works);
         }
+        used.reset();
     }
 
-    lock.lock();
-    if (!m_works.empty() || !tailed)
+    if (!tailed) {
+        lock.lock();
         goto again;
+    }
 
+    if (!m_works.empty() || used)
+        goto again2;
+
+    lock.lock();
     xm_completed = true;
     cv.notify_all();
     lock.unlock();

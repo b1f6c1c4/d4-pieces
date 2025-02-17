@@ -32,8 +32,11 @@ void CudaSearcher::free() {
 void CudaSearcher::search_GPU() {
     Sorter sorter{};
     std::vector<std::unique_ptr<Device>> devs;
-    for (auto i = 0; i < n_devices; i++)
+    std::vector<int> idx;
+    for (auto i = 0; i < n_devices; i++) {
         devs.emplace_back(std::make_unique<Device>(i, height, sorter));
+        idx.push_back(i);
+    }
 
     std::mutex mtx;
     auto done = false;
@@ -64,14 +67,11 @@ void CudaSearcher::search_GPU() {
     } };
 
     while (!solutions.empty()) {
-        std::ranges::sort(devs, std::less{}, [](const std::unique_ptr<Device> &dev) {
-            return dev->get_etc();
+        std::ranges::sort(idx, std::less{}, [&](int i) {
+            return devs[i]->get_etc();
         });
-        for (auto &dev : devs)
-            if (!dev)
-                THROW("worst nightmare");
         // Device::c is responsible for free up
-        devs.front()->dispatch(solutions.front());
+        devs[idx.front()]->dispatch(solutions.front());
         solutions.pop_front();
     }
     for (auto &dev : devs) dev->close();
